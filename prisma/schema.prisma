@@ -1,0 +1,248 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  AGENT
+}
+
+enum Channel {
+  WHATSAPP
+  EMAIL
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum RecipientStatus {
+  PENDING
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  SKIPPED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum ConversationStatus {
+  OPEN
+  PENDING
+  CLOSED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         Role     @default(ADMIN)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model WhatsAppAccount {
+  id                 String   @id @default(cuid())
+  phoneNumberId      String
+  wabaId             String
+  accessToken        String
+  displayPhoneNumber String?
+  businessName       String?
+  webhookVerifyToken String
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model WhatsAppSession {
+  id              String    @id @default(cuid())
+  status          String    @default("DISCONNECTED")
+  qrCode          String?
+  phoneNumber     String?
+  lastConnectedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model EmailAccount {
+  id        String   @id @default(cuid())
+  host      String
+  port      Int      @default(587)
+  secure    Boolean  @default(false)
+  username  String
+  password  String
+  fromEmail String
+  fromName  String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Contact {
+  id            String               @id @default(cuid())
+  phone         String?              @unique
+  name          String?
+  email         String?              @unique
+  tags          String[]             @default([])
+  optedOut      Boolean              @default(false)
+  emailOptedOut Boolean              @default(false)
+  customFields  Json?
+  lastMessageAt DateTime?
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  messages      Message[]
+  recipients    CampaignRecipient[]
+  conversations Conversation[]
+}
+
+model Lead {
+  id        String   @id @default(cuid())
+  query     String
+  name      String
+  phone     String?
+  email     String?
+  website   String?
+  address   String?
+  category  String?
+  rating    Float?
+  reviews   Int?
+  imported  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([query])
+  @@index([createdAt])
+}
+
+model Template {
+  id             String     @id @default(cuid())
+  channel        Channel    @default(WHATSAPP)
+  metaTemplateId String?
+  name           String
+  language       String     @default("en_US")
+  category       String
+  status         String
+  subject        String?
+  body           String?
+  header         String?
+  footer         String?
+  components     Json?
+  isSample       Boolean    @default(false)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  campaigns      Campaign[]
+
+  @@unique([name, language, channel])
+}
+
+model Campaign {
+  id                 String              @id @default(cuid())
+  name               String
+  channel            Channel             @default(WHATSAPP)
+  status             CampaignStatus      @default(DRAFT)
+  templateId         String
+  template           Template            @relation(fields: [templateId], references: [id])
+  audienceFilter     Json?
+  variableMapping    Json?
+  scheduledAt        DateTime?
+  startedAt          DateTime?
+  completedAt        DateTime?
+  rateLimitPerSecond Int                 @default(10)
+  totalCount         Int                 @default(0)
+  sentCount          Int                 @default(0)
+  deliveredCount     Int                 @default(0)
+  readCount          Int                 @default(0)
+  failedCount        Int                 @default(0)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  recipients         CampaignRecipient[]
+  messages           Message[]
+}
+
+model CampaignRecipient {
+  id           String          @id @default(cuid())
+  campaignId   String
+  campaign     Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contactId    String
+  contact      Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  status       RecipientStatus @default(PENDING)
+  errorMessage String?
+  messageId    String?
+  sentAt       DateTime?
+  deliveredAt  DateTime?
+  readAt       DateTime?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  @@unique([campaignId, contactId])
+  @@index([campaignId, status])
+}
+
+model Conversation {
+  id                 String             @id @default(cuid())
+  contactId          String
+  contact            Contact            @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  channel            Channel            @default(WHATSAPP)
+  lastMessageAt      DateTime           @default(now())
+  lastMessagePreview String?
+  unreadCount        Int                @default(0)
+  windowExpiresAt    DateTime?
+  status             ConversationStatus @default(OPEN)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  messages           Message[]
+
+  @@unique([contactId, channel])
+  @@index([lastMessageAt])
+}
+
+model Message {
+  id             String           @id @default(cuid())
+  conversationId String?
+  conversation   Conversation?    @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  contactId      String
+  contact        Contact          @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  campaignId     String?
+  campaign       Campaign?        @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  channel        Channel          @default(WHATSAPP)
+  direction      MessageDirection
+  type           String           @default("text")
+  subject        String?
+  body           String?
+  mediaUrl       String?
+  templateName   String?
+  metaMessageId  String?          @unique
+  status         MessageStatus    @default(PENDING)
+  errorCode      String?
+  errorMessage   String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([contactId, createdAt])
+  @@index([metaMessageId])
+  @@index([campaignId])
+}

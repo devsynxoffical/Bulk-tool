@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Separate Python project + runtime artifacts:
+    "Gmap-scrapper/**",
+    ".baileys/**",
   ]),
 ]);
 
