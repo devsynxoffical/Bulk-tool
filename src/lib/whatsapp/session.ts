@@ -147,6 +147,11 @@ async function handleInbound(sock: WASocket, messages: { key: { id?: string | nu
 
 function wireEvents(sock: WASocket) {
   sock.ev.on("connection.update", async (update: Partial<ConnectionState>) => {
+    console.log("[wa] connection.update", JSON.stringify({
+      connection: update.connection,
+      hasQr: !!update.qr,
+      statusCode: (update.lastDisconnect?.error as { output?: { statusCode?: number } } | undefined)?.output?.statusCode,
+    }));
     const { connection, lastDisconnect, qr, isNewLogin } = update;
 
     if (qr) {
