@@ -1,6 +1,9 @@
-FROM --platform=linux/amd64 mcr.microsoft.com/playwright/python:v1.49.1-focal
+FROM python:3.11-slim
 
 WORKDIR /app
+
+RUN pip install --no-cache-dir playwright==1.49.1 && \
+    playwright install --with-deps chromium
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
