@@ -1,22 +1,6 @@
 from __future__ import annotations
 """
-Google Maps Scraper — Headless Playwright.
-
-Deep-scrape mode
-────────────────
-Google Maps caps each search at ~120 results.  To get ALL businesses in a
-city we split the area into a grid (e.g. 3×3 = 9 zones), run a separate
-search in each zone, then de-duplicate.  This routinely returns 300-1 000+
-unique leads per city.
-
-Flow
-────
-1. Launch hidden Chromium
-2. First search → detect city centre coordinates
-3. Build a grid of lat/lng points around that centre
-4. For each grid cell: navigate → scroll → collect listing URLs
-5. Visit every unique listing → extract details
-6. Return de-duplicated list of Lead objects
+Google Maps Scraper — High-Speed Headless Playwright Engine with Concurrency
 """
 
 import asyncio
@@ -60,17 +44,11 @@ SEL_INFO_BTN = "button[data-item-id]"
 SEL_INFO_LINK = "a[data-item-id]"
 
 
-# ═══════════════════════════════════════════════════════════════════════
-#  Grid helpers
-# ═══════════════════════════════════════════════════════════════════════
-
 def _build_grid(centre_lat: float, centre_lng: float) -> list[tuple[float, float]]:
     """Create a grid of (lat, lng) points around the city centre."""
     n = config.GRID_SIZE
     r_km = config.GRID_RADIUS_KM
 
-    # 1° latitude  ≈ 111 km
-    # 1° longitude ≈ 111 km × cos(lat)
     lat_step = (r_km * 2 / n) / 111.0
     lng_step = (r_km * 2 / n) / (111.0 * math.cos(math.radians(centre_lat)))
 
@@ -95,10 +73,6 @@ def _extract_coords_from_url(url: str) -> tuple[float, float] | None:
     return None
 
 
-# ═══════════════════════════════════════════════════════════════════════
-#  Scraper
-# ═══════════════════════════════════════════════════════════════════════
-
 class GoogleMapsScraper:
 
     URL = "https://www.google.com/maps"
@@ -111,10 +85,6 @@ class GoogleMapsScraper:
         self._email_visits: int = 0
         self.on_lead = None
 
-    # ──────────────────────────────────────────────────────────────────
-    #  Public: deep scrape (grid-based)
-    # ──────────────────────────────────────────────────────────────────
-
     async def deep_scrape(
         self,
         niche: str,
@@ -123,9 +93,6 @@ class GoogleMapsScraper:
         max_leads: int | None = None,
         on_lead=None,
     ) -> list[Lead]:
-        """
-        Scrape the ENTIRE city by dividing it into grid zones.
-        """
         self.include_emails = include_emails
         self.on_lead = on_lead
         query = f"{niche} in {city}"
@@ -155,7 +122,6 @@ class GoogleMapsScraper:
             page.set_default_timeout(config.BROWSER_TIMEOUT)
 
             try:
-                # ── Step 1: First search to find city centre ─────────
                 await self._open(page)
                 await self._search(page, query)
                 centre = _extract_coords_from_url(page.url)
@@ -163,21 +129,17 @@ class GoogleMapsScraper:
                 if not centre:
                     console.print("[yellow]  ⚠ Could not detect city centre, using single search.[/]")
                     hrefs = await self._scroll_and_collect(page)
-                    await self._extract_all(page, hrefs)
+                    await self._extract_all(ctx, hrefs)
                 else:
                     lat, lng = centre
                     console.print(f"[dim]  → City centre: {lat}, {lng}[/]")
 
-                    # ── Step 2: Collect hrefs from first search ──────
                     first_hrefs = await self._scroll_and_collect(page)
                     for h in first_hrefs:
                         self._seen_hrefs.add(h)
 
-                    # ── Step 3: Grid search ──────────────────────────
                     grid = _build_grid(lat, lng)
-                    console.print(
-                        f"\n[bold]  → Searching {total_zones} grid zones…[/]\n"
-                    )
+                    console.print(f"\n[bold]  → Searching {total_zones} grid zones…[/]\n")
 
                     with Progress(
                         SpinnerColumn(),
@@ -197,34 +159,36 @@ class GoogleMapsScraper:
                             )
                             try:
                                 await page.goto(zone_url, wait_until="domcontentloaded", timeout=20_000)
-                                await asyncio.sleep(3)
+                                await asyncio.sleep(1.5)
 
-                                # Scroll this zone
                                 zone_hrefs = await self._scroll_and_collect(page, silent=True)
                                 new = sum(1 for h in zone_hrefs if h not in self._seen_hrefs)
                                 for h in zone_hrefs:
                                     self._seen_hrefs.add(h)
 
                                 prog.update(
-                                    task, completed=zi + 1,
+                                    task,
+                                    completed=zi + 1,
                                     description=f"Zone {zi+1}: +{new} new  (total {len(self._seen_hrefs)})",
                                 )
                             except Exception:
-                                prog.update(task, completed=zi + 1,
-                                            description=f"[red]Zone {zi+1} failed[/]")
+                                prog.update(
+                                    task,
+                                    completed=zi + 1,
+                                    description=f"[red]Zone {zi+1} failed[/]",
+                                )
 
                     console.print(
                         f"\n[bold]  → {len(self._seen_hrefs)} total unique listings across all zones[/]\n"
                     )
 
-                    # ── Step 4: Extract details from ALL listings ────
                     all_hrefs = list(self._seen_hrefs)
                     if len(all_hrefs) > config.MAX_LEADS_PER_SEARCH:
                         all_hrefs = all_hrefs[: config.MAX_LEADS_PER_SEARCH]
                     if max_leads and len(all_hrefs) > max_leads:
                         all_hrefs = all_hrefs[:max_leads]
 
-                    await self._extract_all(page, all_hrefs)
+                    await self._extract_all(ctx, all_hrefs)
 
             except Exception as e:
                 console.print(f"[bold red]❌ Error: {e}[/]")
@@ -235,10 +199,6 @@ class GoogleMapsScraper:
             f"\n[bold green]✅ Deep scrape complete — {len(self.leads)} unique leads[/]\n"
         )
         return self.leads
-
-    # ──────────────────────────────────────────────────────────────────
-    #  Public: single search (quick mode)
-    # ──────────────────────────────────────────────────────────────────
 
     async def scrape(
         self,
@@ -272,7 +232,7 @@ class GoogleMapsScraper:
                 hrefs = await self._scroll_and_collect(page)
                 if max_leads and len(hrefs) > max_leads:
                     hrefs = hrefs[:max_leads]
-                await self._extract_all(page, hrefs)
+                await self._extract_all(ctx, hrefs)
             except Exception as e:
                 console.print(f"[bold red]❌ Error: {e}[/]")
             finally:
@@ -281,14 +241,10 @@ class GoogleMapsScraper:
         console.print(f"\n[bold green]✅ Scraped {len(self.leads)} unique leads[/]\n")
         return self.leads
 
-    # ══════════════════════════════════════════════════════════════════
-    #  Internal steps
-    # ══════════════════════════════════════════════════════════════════
-
     async def _open(self, page: Page):
         console.print("[dim]  → Opening Google Maps (headless)…[/]")
         await page.goto(self.URL, wait_until="networkidle", timeout=30_000)
-        await asyncio.sleep(2)
+        await asyncio.sleep(1)
 
         for sel in [
             "button:has-text('Accept all')",
@@ -303,7 +259,7 @@ class GoogleMapsScraper:
                 if await btn.count() > 0:
                     await btn.first.click()
                     console.print("[dim]  → Accepted consent dialog[/]")
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(1)
                     break
             except Exception:
                 continue
@@ -319,7 +275,7 @@ class GoogleMapsScraper:
                 if attempt < 2:
                     console.print("[yellow]  ⚠ Retrying…[/]")
                     await page.goto(self.URL, wait_until="networkidle", timeout=30_000)
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(2)
                 else:
                     raise Exception("Search box not found after 3 attempts")
 
@@ -327,12 +283,12 @@ class GoogleMapsScraper:
         await box.click()
         await box.fill(query)
         await page.keyboard.press("Enter")
-        await asyncio.sleep(3)
+        await asyncio.sleep(2)
 
         try:
             await page.wait_for_selector(SEL_FEED, timeout=15_000)
         except PwTimeout:
-            await asyncio.sleep(5)
+            await asyncio.sleep(3)
 
     async def _scroll_and_collect(self, page: Page, silent: bool = False) -> list[str]:
         if not silent:
@@ -361,7 +317,7 @@ class GoogleMapsScraper:
                 break
             if cur == prev:
                 stale += 1
-                if stale >= 5:
+                if stale >= 4:
                     break
             else:
                 stale = 0
@@ -380,8 +336,23 @@ class GoogleMapsScraper:
             console.print(f"[dim]  → {len(hrefs)} listings found[/]")
         return hrefs
 
-    async def _extract_all(self, page: Page, hrefs: list[str]):
-        console.print(f"[dim]  → Extracting details for {len(hrefs)} listings…[/]")
+    async def _extract_all(self, ctx: BrowserContext, hrefs: list[str]):
+        if not hrefs:
+            return
+
+        concurrency = getattr(config, "CONCURRENCY", 6)
+        console.print(f"[dim]  → Parallel extraction of {len(hrefs)} listings ({concurrency} workers)…[/]")
+
+        sem = asyncio.Semaphore(concurrency)
+        lock = asyncio.Lock()
+        completed_count = 0
+
+        num_workers = min(concurrency, len(hrefs))
+        worker_pages = [await ctx.new_page() for _ in range(num_workers)]
+        page_queue: asyncio.Queue[Page] = asyncio.Queue()
+        for p in worker_pages:
+            p.set_default_timeout(config.BROWSER_TIMEOUT)
+            await page_queue.put(p)
 
         with Progress(
             SpinnerColumn(),
@@ -393,43 +364,58 @@ class GoogleMapsScraper:
         ) as prog:
             task = prog.add_task("Extracting…", total=len(hrefs))
 
-            for idx, href in enumerate(hrefs):
-                try:
-                    await page.goto(href, wait_until="domcontentloaded", timeout=20_000)
-                    await asyncio.sleep(
-                        random.uniform(config.DETAIL_DELAY_MIN, config.DETAIL_DELAY_MAX)
-                    )
-                    lead = await self._extract_one(page, href)
-                    if lead and lead.name:
-                        key = f"{lead.name}|{lead.phone}"
-                        if key not in self._seen_keys:
-                            self._seen_keys.add(key)
-                            if (
-                                self.include_emails
-                                and lead.website
-                                and self._email_visits < config.EMAIL_MAX_SITES
-                            ):
-                                self._email_visits += 1
-                                try:
-                                    lead.email = await find_email_on_site(
-                                        page,
-                                        lead.website,
-                                        timeout_ms=config.EMAIL_VISIT_TIMEOUT * 1000,
-                                    )
-                                except Exception:
-                                    lead.email = ""
-                            self.leads.append(lead)
-                            if self.on_lead:
-                                try:
-                                    self.on_lead(lead)
-                                except Exception:
-                                    pass
-                            prog.update(task, completed=idx + 1,
-                                        description=f"✔ {lead.name[:40]}")
-                            continue
-                except Exception:
-                    pass
-                prog.update(task, completed=idx + 1)
+            async def process_one(href: str):
+                nonlocal completed_count
+                async with sem:
+                    worker_page = await page_queue.get()
+                    try:
+                        await worker_page.goto(href, wait_until="domcontentloaded", timeout=15_000)
+                        await asyncio.sleep(random.uniform(config.DETAIL_DELAY_MIN, config.DETAIL_DELAY_MAX))
+                        lead = await self._extract_one(worker_page, href)
+
+                        if lead and lead.name:
+                            key = f"{lead.name}|{lead.phone}"
+                            async with lock:
+                                is_new = key not in self._seen_keys
+                                if is_new:
+                                    self._seen_keys.add(key)
+
+                            if is_new:
+                                if self.include_emails and lead.website and self._email_visits < config.EMAIL_MAX_SITES:
+                                    async with lock:
+                                        self._email_visits += 1
+                                    try:
+                                        lead.email = await find_email_on_site(
+                                            worker_page,
+                                            lead.website,
+                                            timeout_ms=config.EMAIL_VISIT_TIMEOUT * 1000,
+                                        )
+                                    except Exception:
+                                        lead.email = ""
+
+                                async with lock:
+                                    self.leads.append(lead)
+                                    if self.on_lead:
+                                        try:
+                                            self.on_lead(lead)
+                                        except Exception:
+                                            pass
+                                    prog.update(task, description=f"✔ {lead.name[:40]}")
+                    except Exception:
+                        pass
+                    finally:
+                        async with lock:
+                            completed_count += 1
+                            prog.update(task, completed=completed_count)
+                        await page_queue.put(worker_page)
+
+            await asyncio.gather(*(process_one(h) for h in hrefs))
+
+        for p in worker_pages:
+            try:
+                await p.close()
+            except Exception:
+                pass
 
     async def _extract_one(self, page: Page, url: str) -> Lead | None:
         lead = Lead(google_maps_url=url)
@@ -503,10 +489,6 @@ class GoogleMapsScraper:
         except Exception:
             return None
 
-
-# ═══════════════════════════════════════════════════════════════════════
-#  Convenience wrappers
-# ═══════════════════════════════════════════════════════════════════════
 
 async def scrape_google_maps(
     query: str,

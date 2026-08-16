@@ -1,16 +1,15 @@
 """
-Email extraction — visits a business's website (and common contact pages)
-and pulls out the first public email address.
-
-Google Maps does NOT expose emails on its listings, so the only reliable
-source is the business's own website.  We reuse the same headless browser
-page the scraper already has open.
+High-Speed Email Extraction Engine — visits business websites asynchronously via HTTP (httpx)
+and falls back to Playwright browser if needed.
 """
 
 from __future__ import annotations
 
+import asyncio
 import re
 from urllib.parse import urljoin, urlparse
+
+import httpx
 
 EMAIL_RE = re.compile(
     r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}"
@@ -31,22 +30,14 @@ CONTACT_PATHS = [
     "",
     "/contact",
     "/contact-us",
-    "/contactus",
-    "/contact_us",
-    "/contacts",
     "/about",
     "/about-us",
-    "/aboutus",
-    "/pages/contact",
-    "/contact.html",
-    "/contact-us.html",
-    "/en/contact",
-    "/kontakt",
 ]
 
 JUNK_DOMAINS = (
     "example.com", "sentry.io", "schema.org", "wixpress.com", "wordpress.com",
-    "cloudflare.com", "googleapis.com", "typekit.com", "hotjar.com",
+    "cloudflare.com", "googleapis.com", "typekit.com", "hotjar.com", "sentry-cdn.com",
+    "domain.com", "email.com",
 )
 
 
@@ -85,12 +76,10 @@ def _should_skip(host: str) -> bool:
     return any(base.endswith("." + s) for s in SKIP_HOSTS)
 
 
-async def find_email_on_site(page, website_url: str, timeout_ms: int = 12_000) -> str:
+async def find_email_on_site(page, website_url: str, timeout_ms: int = 5_000) -> str:
     """
-    Visit a business website + contact pages, return the first email found.
-
-    Returns "" when nothing can be found.  Never raises — callers should not
-    let one bad website break the whole scrape.
+    Visit a business website + contact pages asynchronously, returning the first valid email found.
+    Uses ultra-fast async HTTP (httpx) first, with fallback to Playwright page navigation.
     """
     url = (website_url or "").strip()
     if not url:
@@ -105,18 +94,45 @@ async def find_email_on_site(page, website_url: str, timeout_ms: int = 12_000) -
     if not host or _should_skip(host):
         return ""
 
-    tried: set[str] = set()
-    for path in CONTACT_PATHS:
-        target = urljoin(url, path) if path else url
-        if target in tried:
-            continue
-        tried.add(target)
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/131.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+
+    # ── 1. Fast HTTP Async Fetch ─────────────────────────────────────
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout_ms / 1000.0, connect=3.0),
+            follow_redirects=True,
+            verify=False,
+            headers=headers,
+        ) as client:
+            for path in CONTACT_PATHS:
+                target = urljoin(url, path) if path else url
+                try:
+                    res = await client.get(target)
+                    if res.status_code == 200:
+                        emails = _parse(res.text)
+                        if emails:
+                            return emails[0]
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    # ── 2. Fallback to Playwright Page ─────────────────────────────────
+    if page:
         try:
-            await page.goto(target, wait_until="domcontentloaded", timeout=timeout_ms)
+            await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
             html = await page.content()
+            emails = _parse(html)
+            if emails:
+                return emails[0]
         except Exception:
-            continue
-        emails = _parse(html)
-        if emails:
-            return emails[0]
+            pass
+
     return ""
