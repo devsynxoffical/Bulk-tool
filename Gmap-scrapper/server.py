@@ -32,7 +32,7 @@ maps_scraper.console.quiet = True
 exporter.console.quiet = True
 
 HOST = os.environ.get("SCRAPER_HOST", "0.0.0.0")
-PORT = int(os.environ.get("PORT", os.environ.get("SCRAPER_PORT", "8787")))
+PORT = int(os.environ.get("SCRAPER_PORT", "8787"))
 
 JOBS: dict[str, dict] = {}
 LOCK = threading.Lock()
