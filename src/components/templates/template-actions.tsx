@@ -19,7 +19,7 @@ export function TemplateActions() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [open, setOpen] = useState(false);
-  const [channel, setChannel] = useState<"WHATSAPP" | "EMAIL">("WHATSAPP");
+  const [channel, setChannel] = useState<"WHATSAPP" | "EMAIL">("EMAIL");
   const [name, setName] = useState("");
   const [category, setCategory] = useState("MARKETING");
   const [subject, setSubject] = useState("");
@@ -201,8 +201,8 @@ export function TemplateActions() {
                       setChannel(e.target.value as "WHATSAPP" | "EMAIL")
                     }
                   >
-                    <option value="WHATSAPP">WhatsApp</option>
                     <option value="EMAIL">Email</option>
+                    <option value="WHATSAPP">WhatsApp</option>
                   </Select>
                 </div>
                 <div className="space-y-1.5">

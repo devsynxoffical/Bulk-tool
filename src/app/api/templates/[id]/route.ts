@@ -6,18 +6,41 @@ import { requireSession } from "@/lib/api";
 const schema = z
   .object({
     channel: z.enum(["WHATSAPP", "EMAIL"]),
-    name: z.string().min(2).max(64),
-    category: z.string().min(2).max(32).default("MARKETING"),
-    subject: z.string().max(200).optional(),
+    name: z.string().min(2).max(100),
+    category: z.string().min(2).max(64).default("MARKETING"),
+    subject: z.string().max(500).optional().nullable(),
     body: z.string().min(1),
-    header: z.string().max(200).optional(),
-    footer: z.string().max(200).optional(),
-    pdfUrl: z.string().max(1000).optional(),
+    header: z.string().max(300).optional().nullable(),
+    footer: z.string().max(300).optional().nullable(),
+    pdfUrl: z.string().max(1000).optional().nullable(),
   })
-  .refine((d) => d.channel !== "EMAIL" || (d.subject && d.subject.length > 0), {
+  .refine((d) => d.channel !== "EMAIL" || (d.subject && d.subject.trim().length > 0), {
     message: "Email templates need a subject line",
     path: ["subject"],
   });
+
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { error } = await requireSession();
+  if (error) return error;
+
+  const { id } = await params;
+  if (!id) {
+    return NextResponse.json({ error: "Template ID required" }, { status: 400 });
+  }
+
+  const template = await prisma.template.findUnique({
+    where: { id },
+  });
+
+  if (!template) {
+    return NextResponse.json({ error: "Template not found" }, { status: 404 });
+  }
+
+  return NextResponse.json(template);
+}
 
 export async function PUT(
   req: NextRequest,
@@ -31,7 +54,8 @@ export async function PUT(
     return NextResponse.json({ error: "Template ID required" }, { status: 400 });
   }
 
-  const parsed = schema.safeParse(await req.json().catch(() => ({})));
+  const bodyData = await req.json().catch(() => ({}));
+  const parsed = schema.safeParse(bodyData);
   if (!parsed.success) {
     const msg = parsed.error.issues[0]?.message ?? "Invalid template details";
     return NextResponse.json({ error: msg }, { status: 400 });

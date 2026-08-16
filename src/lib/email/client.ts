@@ -24,6 +24,7 @@ export async function sendEmailMessage(params: {
   text?: string;
   pdfUrl?: string;
   attachments?: EmailAttachment[];
+  trackingId?: string;
 }) {
   const account = await getActiveEmailAccount();
   if (!account) {
@@ -41,10 +42,21 @@ export async function sendEmailMessage(params: {
   let finalHtml = params.html;
   if (acc.signature && acc.signature.trim() && !finalHtml.includes("email-signature-container")) {
     finalHtml += `
-      <div class="email-signature-container" style="margin-top: 32px; pt-4; border-top: 1px solid #e2e8f0; font-family: sans-serif; color: #334155;">
+      <div class="email-signature-container" style="margin-top: 32px; padding-top: 16px; border-top: 1px solid #e2e8f0; font-family: sans-serif; color: #334155;">
         ${acc.signature}
       </div>
     `;
+  }
+
+  // Embed open tracking pixel if trackingId is provided
+  if (params.trackingId) {
+    const baseUrl = process.env.NEXTAUTH_URL || process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000";
+    const trackPixel = `<img src="${baseUrl}/api/emails/track?id=${encodeURIComponent(params.trackingId)}" width="1" height="1" style="display:none !important; width:1px !important; height:1px !important;" alt="" />`;
+    if (finalHtml.includes("</body>")) {
+      finalHtml = finalHtml.replace("</body>", `${trackPixel}</body>`);
+    } else {
+      finalHtml += trackPixel;
+    }
   }
 
   // 2. Prepare Attachments (PDFs or files)

@@ -6,15 +6,15 @@ import { requireSession } from "@/lib/api";
 const schema = z
   .object({
     channel: z.enum(["WHATSAPP", "EMAIL"]),
-    name: z.string().min(2).max(64),
-    category: z.string().min(2).max(32).default("MARKETING"),
-    subject: z.string().max(200).optional(),
+    name: z.string().min(2).max(100),
+    category: z.string().min(2).max(64).default("MARKETING"),
+    subject: z.string().max(500).optional().nullable(),
     body: z.string().min(1),
-    header: z.string().max(200).optional(),
-    footer: z.string().max(200).optional(),
-    pdfUrl: z.string().max(1000).optional(),
+    header: z.string().max(300).optional().nullable(),
+    footer: z.string().max(300).optional().nullable(),
+    pdfUrl: z.string().max(1000).optional().nullable(),
   })
-  .refine((d) => d.channel !== "EMAIL" || (d.subject && d.subject.length > 0), {
+  .refine((d) => d.channel !== "EMAIL" || (d.subject && d.subject.trim().length > 0), {
     message: "Email templates need a subject line",
     path: ["subject"],
   });

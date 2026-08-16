@@ -14,7 +14,7 @@ export function ComposeClient() {
   const presetName = searchParams.get("name");
 
   const [channel, setChannel] = useState<"WHATSAPP" | "EMAIL">(
-    presetEmail && !presetPhone ? "EMAIL" : "WHATSAPP"
+    presetPhone && !presetEmail ? "WHATSAPP" : "EMAIL"
   );
   const [phone, setPhone] = useState(presetPhone || "");
   const [email, setEmail] = useState(presetEmail || "");
@@ -28,9 +28,9 @@ export function ComposeClient() {
     setError("");
 
     const payload =
-      channel === "WHATSAPP"
-        ? { channel: "WHATSAPP", phone, name: name || undefined }
-        : { channel: "EMAIL", email, name: name || undefined };
+      channel === "EMAIL"
+        ? { channel: "EMAIL", email, name: name || undefined }
+        : { channel: "WHATSAPP", phone, name: name || undefined };
 
     const res = await fetch("/api/chats/start", {
       method: "POST",
@@ -53,33 +53,21 @@ export function ComposeClient() {
     <div className="mx-auto flex min-h-[calc(100vh-8rem)] max-w-md flex-col justify-center px-4">
       <div className="mb-6 text-center">
         <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-blue-50">
-          {channel === "WHATSAPP" ? (
-            <MessageCircle className="h-7 w-7 text-[#00a884]" />
-          ) : (
+          {channel === "EMAIL" ? (
             <Mail className="h-7 w-7 text-blue-600" />
+          ) : (
+            <MessageCircle className="h-7 w-7 text-[#00a884]" />
           )}
         </div>
         <h1 className="text-xl font-semibold tracking-tight text-zinc-900">
           Start new conversation
         </h1>
         <p className="mt-1 text-sm text-zinc-500">
-          Select WhatsApp or Email to compose direct messages.
+          Compose direct Email or WhatsApp messages.
         </p>
       </div>
 
       <div className="mb-4 flex rounded-xl border border-zinc-200 bg-zinc-100 p-1">
-        <button
-          type="button"
-          onClick={() => setChannel("WHATSAPP")}
-          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-xs font-semibold transition ${
-            channel === "WHATSAPP"
-              ? "bg-white text-zinc-900 shadow-xs"
-              : "text-zinc-500 hover:text-zinc-900"
-          }`}
-        >
-          <MessageCircle className="h-4 w-4 text-[#00a884]" />
-          WhatsApp
-        </button>
         <button
           type="button"
           onClick={() => setChannel("EMAIL")}
@@ -92,13 +80,43 @@ export function ComposeClient() {
           <Mail className="h-4 w-4 text-blue-600" />
           Email (Resend)
         </button>
+        <button
+          type="button"
+          onClick={() => setChannel("WHATSAPP")}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-xs font-semibold transition ${
+            channel === "WHATSAPP"
+              ? "bg-white text-zinc-900 shadow-xs"
+              : "text-zinc-500 hover:text-zinc-900"
+          }`}
+        >
+          <MessageCircle className="h-4 w-4 text-[#00a884]" />
+          WhatsApp
+        </button>
       </div>
 
       <form
         onSubmit={startChat}
         className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm space-y-4"
       >
-        {channel === "WHATSAPP" ? (
+        {channel === "EMAIL" ? (
+          <div className="space-y-1.5">
+            <Label htmlFor="email">Email address</Label>
+            <Input
+              id="email"
+              type="email"
+              autoFocus
+              autoComplete="email"
+              placeholder="client@company.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              className="h-11 text-base"
+            />
+            <p className="text-[11px] text-zinc-400">
+              Emails will be delivered via your configured Resend API
+            </p>
+          </div>
+        ) : (
           <div className="space-y-1.5">
             <Label htmlFor="phone">Phone number</Label>
             <Input
@@ -115,24 +133,6 @@ export function ComposeClient() {
             />
             <p className="text-[11px] text-zinc-400">
               Include country code (e.g. +92 for Pakistan, +1 for US)
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-1.5">
-            <Label htmlFor="email">Email address</Label>
-            <Input
-              id="email"
-              type="email"
-              autoFocus
-              autoComplete="email"
-              placeholder="client@company.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              className="h-11 text-base"
-            />
-            <p className="text-[11px] text-zinc-400">
-              Emails will be delivered via your configured Resend API
             </p>
           </div>
         )}

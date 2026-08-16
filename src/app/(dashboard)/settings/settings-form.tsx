@@ -172,22 +172,11 @@ function WhatsAppForm() {
 }
 
 export function SettingsClient() {
-  const [activeTab, setActiveTab] = useState<"whatsapp" | "email">("whatsapp");
+  const [activeTab, setActiveTab] = useState<"email" | "whatsapp">("email");
 
   return (
     <div className="space-y-6">
       <div className="flex border-b border-zinc-200">
-        <button
-          type="button"
-          onClick={() => setActiveTab("whatsapp")}
-          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold transition ${
-            activeTab === "whatsapp"
-              ? "border-emerald-600 text-emerald-600"
-              : "border-transparent text-zinc-500 hover:text-zinc-900"
-          }`}
-        >
-          <span>💬</span> WhatsApp Settings
-        </button>
         <button
           type="button"
           onClick={() => setActiveTab("email")}
@@ -199,9 +188,20 @@ export function SettingsClient() {
         >
           <span>✉️</span> Email Settings (Resend / SMTP)
         </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("whatsapp")}
+          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold transition ${
+            activeTab === "whatsapp"
+              ? "border-emerald-600 text-emerald-600"
+              : "border-transparent text-zinc-500 hover:text-zinc-900"
+          }`}
+        >
+          <span>💬</span> WhatsApp Settings
+        </button>
       </div>
 
-      {activeTab === "whatsapp" ? <WhatsAppForm /> : <EmailForm />}
+      {activeTab === "email" ? <EmailForm /> : <WhatsAppForm />}
     </div>
   );
 }

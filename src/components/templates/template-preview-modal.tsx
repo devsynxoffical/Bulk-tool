@@ -131,21 +131,30 @@ export function TemplatePreviewModal({
             </div>
 
             {/* Email Content Body */}
-            <div className="p-6 font-sans text-zinc-900 leading-relaxed text-sm bg-white min-h-[300px]">
+            <div className="bg-white min-h-[350px] overflow-hidden rounded-b-lg">
               {template.header ? (
-                <div className="mb-4 pb-2 border-b border-zinc-100 text-xs font-bold uppercase tracking-wider text-blue-600">
+                <div className="p-4 pb-2 border-b border-zinc-100 text-xs font-bold uppercase tracking-wider text-blue-600">
                   {template.header}
                 </div>
               ) : null}
 
-              {/* Render HTML content safely */}
-              <div
-                className="email-html-render text-zinc-900"
-                dangerouslySetInnerHTML={{ __html: interpolatedBody }}
-              />
+              {/* Render HTML content safely inside iframe or div */}
+              {interpolatedBody.includes("<") ? (
+                <iframe
+                  srcDoc={interpolatedBody}
+                  title={template.name || "Email Template Preview"}
+                  className="w-full min-h-[480px] border-0 bg-white"
+                  sandbox="allow-same-origin allow-scripts"
+                />
+              ) : (
+                <div
+                  className="p-6 font-sans text-zinc-900 leading-relaxed text-sm bg-white"
+                  dangerouslySetInnerHTML={{ __html: interpolatedBody }}
+                />
+              )}
 
               {template.footer ? (
-                <div className="mt-8 pt-4 border-t border-zinc-100 text-xs text-zinc-400">
+                <div className="p-4 pt-4 border-t border-zinc-100 text-xs text-zinc-400">
                   {template.footer}
                 </div>
               ) : null}

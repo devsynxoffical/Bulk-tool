@@ -38,14 +38,14 @@ function channelTone(channel: string) {
 
 export function TemplatesList({ templates }: { templates: TemplateItem[] }) {
   const router = useRouter();
-  const [tab, setTab] = useState<"ALL" | "WHATSAPP" | "EMAIL">("ALL");
+  const [tab, setTab] = useState<"EMAIL" | "WHATSAPP" | "ALL">("EMAIL");
   const [activePreviewTemplate, setActivePreviewTemplate] = useState<TemplateItem | null>(null);
   const [activeEditingTemplate, setActiveEditingTemplate] = useState<TemplateItem | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const filtered = templates.filter((t) => {
-    if (tab === "WHATSAPP") return t.channel === "WHATSAPP";
     if (tab === "EMAIL") return t.channel === "EMAIL";
+    if (tab === "WHATSAPP") return t.channel === "WHATSAPP";
     return true;
   });
 
@@ -78,14 +78,14 @@ export function TemplatesList({ templates }: { templates: TemplateItem[] }) {
       <div className="flex border-b border-zinc-200">
         <button
           type="button"
-          onClick={() => setTab("ALL")}
+          onClick={() => setTab("EMAIL")}
           className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold transition ${
-            tab === "ALL"
-              ? "border-zinc-900 text-zinc-900"
+            tab === "EMAIL"
+              ? "border-blue-600 text-blue-600"
               : "border-transparent text-zinc-500 hover:text-zinc-900"
           }`}
         >
-          All Templates ({templates.length})
+          <span>✉️</span> Email Templates ({templates.filter((t) => t.channel === "EMAIL").length})
         </button>
         <button
           type="button"
@@ -100,14 +100,14 @@ export function TemplatesList({ templates }: { templates: TemplateItem[] }) {
         </button>
         <button
           type="button"
-          onClick={() => setTab("EMAIL")}
+          onClick={() => setTab("ALL")}
           className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold transition ${
-            tab === "EMAIL"
-              ? "border-blue-600 text-blue-600"
+            tab === "ALL"
+              ? "border-zinc-900 text-zinc-900"
               : "border-transparent text-zinc-500 hover:text-zinc-900"
           }`}
         >
-          <span>✉️</span> Email ({templates.filter((t) => t.channel === "EMAIL").length})
+          All Templates ({templates.length})
         </button>
       </div>
 
@@ -167,13 +167,17 @@ export function TemplatesList({ templates }: { templates: TemplateItem[] }) {
                   </p>
                 ) : null}
                 
-                {t.channel === "EMAIL" && t.body?.includes("<") ? (
-                  <div className="line-clamp-4 rounded-md border border-zinc-100 bg-zinc-50/50 p-2.5 text-xs text-zinc-600 font-sans">
-                    <span className="font-semibold text-zinc-800">Subject: {t.subject}</span>
-                    <div dangerouslySetInnerHTML={{ __html: t.body.slice(0, 300) }} />
+                {t.channel === "EMAIL" ? (
+                  <div className="rounded-md border border-zinc-100 bg-zinc-50/50 p-2.5 text-xs text-zinc-600 font-sans space-y-1">
+                    <p className="font-semibold text-zinc-800 truncate">Subject: {t.subject || "No subject"}</p>
+                    <p className="line-clamp-3 text-zinc-500">
+                      {t.body
+                        ? t.body.replace(/<[^>]*>?/gm, " ").replace(/\s+/g, " ").trim().slice(0, 180) + (t.body.length > 180 ? "…" : "")
+                        : "No body preview"}
+                    </p>
                   </div>
                 ) : (
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-700">
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-700 line-clamp-4">
                     {t.body || "No body preview"}
                   </p>
                 )}

@@ -150,6 +150,7 @@ export async function processCampaignJob(job: Job<CampaignJobData>) {
         subject,
         html,
         pdfUrl: recipient.campaign.template.pdfUrl || undefined,
+        trackingId: recipientId,
       });
       externalId = result.messageId;
     } else {

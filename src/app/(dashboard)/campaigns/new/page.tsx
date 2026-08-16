@@ -41,7 +41,7 @@ export default function NewCampaignPage() {
 
   const [allTemplates, setAllTemplates] = useState<Template[]>([]);
   const [allContacts, setAllContacts] = useState<ContactSummary[]>([]);
-  const [channel, setChannel] = useState<"WHATSAPP" | "EMAIL">("WHATSAPP");
+  const [channel, setChannel] = useState<"WHATSAPP" | "EMAIL">("EMAIL");
   const [name, setName] = useState("");
   const [templateId, setTemplateId] = useState("");
   const [tag, setTag] = useState(initialTag);
@@ -121,7 +121,7 @@ export default function NewCampaignPage() {
     <div>
       <PageHeader
         title="New campaign"
-        description="Send bulk WhatsApp messages or emails to a tagged audience."
+        description="Send bulk email or WhatsApp campaigns to your target leads."
       />
 
       <form onSubmit={onSubmit} className="mx-auto max-w-2xl space-y-4">
@@ -129,8 +129,7 @@ export default function NewCampaignPage() {
           <CardHeader>
             <CardTitle>Campaign details</CardTitle>
             <CardDescription>
-              WhatsApp campaigns need clients with phone numbers; email campaigns
-              need clients with email addresses.
+              Email campaigns send via Resend/SMTP; WhatsApp campaigns send to clients with valid phone numbers.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -139,19 +138,19 @@ export default function NewCampaignPage() {
               <div className="flex gap-2">
                 <Button
                   type="button"
-                  variant={channel === "WHATSAPP" ? "default" : "outline"}
-                  onClick={() => switchChannel("WHATSAPP")}
-                  className="flex-1"
-                >
-                  WhatsApp
-                </Button>
-                <Button
-                  type="button"
                   variant={channel === "EMAIL" ? "default" : "outline"}
                   onClick={() => switchChannel("EMAIL")}
                   className="flex-1"
                 >
                   Email
+                </Button>
+                <Button
+                  type="button"
+                  variant={channel === "WHATSAPP" ? "default" : "outline"}
+                  onClick={() => switchChannel("WHATSAPP")}
+                  className="flex-1"
+                >
+                  WhatsApp
                 </Button>
               </div>
             </div>

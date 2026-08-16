@@ -175,16 +175,6 @@ export async function sendSingleEmail(params: {
     pdfUrl = template.pdfUrl || undefined;
   }
 
-  const result = await sendEmailMessage({
-    to: contact.email,
-    subject,
-    html: html.includes("<")
-      ? html
-      : `<p style="font-family:IBM Plex Sans,Arial,sans-serif;white-space:pre-wrap">${html}</p>`,
-    text: html.replace(/<[^>]+>/g, " ").trim(),
-    pdfUrl,
-  });
-
   const conv = await upsertConversation({
     contactId: contact.id,
     channel: "EMAIL",
@@ -200,10 +190,27 @@ export async function sendSingleEmail(params: {
       type: "email",
       subject,
       body: html,
-      metaMessageId: result.messageId,
       status: "SENT",
     },
   });
+
+  const result = await sendEmailMessage({
+    to: contact.email,
+    subject,
+    html: html.includes("<")
+      ? html
+      : `<p style="font-family:IBM Plex Sans,Arial,sans-serif;white-space:pre-wrap">${html}</p>`,
+    text: html.replace(/<[^>]+>/g, " ").trim(),
+    pdfUrl,
+    trackingId: message.id,
+  });
+
+  if (result?.messageId) {
+    await prisma.message.update({
+      where: { id: message.id },
+      data: { metaMessageId: result.messageId },
+    });
+  }
 
   await prisma.contact.update({
     where: { id: contact.id },
