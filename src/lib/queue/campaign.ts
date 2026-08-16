@@ -2,7 +2,7 @@ import { Queue, Worker, type Job } from "bullmq";
 import IORedis from "ioredis";
 import { prisma } from "@/lib/prisma";
 import { renderTemplateString, sendEmailMessage } from "@/lib/email/client";
-import { renderTemplateBody, sendMessageViaSocket } from "@/lib/whatsapp/sender";
+import { getNextSendingInbox } from "@/lib/email/rotator";
 
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 
@@ -64,19 +64,6 @@ function contactVars(contact: {
   };
 }
 
-function resolveBodyParams(
-  mapping: Record<string, string> | null | undefined,
-  vars: Record<string, string>,
-) {
-  if (!mapping) return [];
-  return Object.keys(mapping)
-    .sort((a, b) => Number(a) - Number(b))
-    .map((key) => {
-      const field = mapping[key];
-      return vars[field] ?? field ?? "";
-    });
-}
-
 export async function processCampaignJob(job: Job<CampaignJobData>) {
   const { campaignId, recipientId } = job.data;
 
@@ -96,29 +83,23 @@ export async function processCampaignJob(job: Job<CampaignJobData>) {
     return;
   }
 
-  const channel = recipient.campaign.channel;
   const vars = contactVars(recipient.contact);
 
-  if (channel === "WHATSAPP" && recipient.contact.optedOut) {
+  if (recipient.contact.emailOptedOut) {
     await prisma.campaignRecipient.update({
       where: { id: recipientId },
-      data: { status: "SKIPPED", errorMessage: "WhatsApp opted out" },
+      data: { status: "SKIPPED", errorMessage: "Recipient opted out of email" },
     });
     return;
   }
 
-  if (channel === "EMAIL" && recipient.contact.emailOptedOut) {
+  if (!recipient.contact.email) {
     await prisma.campaignRecipient.update({
       where: { id: recipientId },
-      data: { status: "SKIPPED", errorMessage: "Email opted out" },
+      data: { status: "SKIPPED", errorMessage: "Contact has no email address" },
     });
     return;
   }
-
-  const mapping = recipient.campaign.variableMapping as
-    | Record<string, string>
-    | null
-    | undefined;
 
   try {
     await prisma.campaignRecipient.update({
@@ -126,113 +107,43 @@ export async function processCampaignJob(job: Job<CampaignJobData>) {
       data: { status: "QUEUED" },
     });
 
-    let externalId: string | undefined;
-    let subject: string | null = null;
-    let preview = "";
+    const subject = renderTemplateString(
+      recipient.campaign.template.subject || "Outreach Message",
+      vars,
+    );
+    const html = renderTemplateString(
+      recipient.campaign.template.body || "",
+      vars,
+    );
 
-    if (channel === "EMAIL") {
-      if (!recipient.contact.email) {
-        throw new Error("Contact has no email");
-      }
+    // Get healthiest sending mailbox via round-robin
+    const sendingInbox = await getNextSendingInbox();
 
-      subject = renderTemplateString(
-        recipient.campaign.template.subject || "Message from Dispatch",
-        vars,
-      );
-      const html = renderTemplateString(
-        recipient.campaign.template.body || "",
-        vars,
-      );
-      preview = subject;
-
-      const result = await sendEmailMessage({
-        to: recipient.contact.email,
-        subject,
-        html,
-        pdfUrl: recipient.campaign.template.pdfUrl || undefined,
-        trackingId: recipientId,
-      });
-      externalId = result.messageId;
-    } else {
-      if (!recipient.contact.phone) {
-        throw new Error("Contact has no phone number");
-      }
-
-      const bodyParams = resolveBodyParams(mapping, vars);
-      const rendered = renderTemplateBody(
-        recipient.campaign.template.body,
-        vars,
-        bodyParams,
-      );
-
-      const conv = await prisma.conversation.upsert({
-        where: {
-          contactId_channel: {
-            contactId: recipient.contactId,
-            channel,
-          },
-        },
-        create: {
-          contactId: recipient.contactId,
-          channel,
-          lastMessageAt: new Date(),
-          lastMessagePreview: `Template: ${recipient.campaign.template.name}`,
-        },
-        update: {
-          lastMessageAt: new Date(),
-          lastMessagePreview: `Template: ${recipient.campaign.template.name}`,
-        },
-      });
-
-      const message = await prisma.message.create({
-        data: {
-          conversationId: conv.id,
-          contactId: recipient.contactId,
-          campaignId,
-          channel,
-          direction: "OUTBOUND",
-          type: "template",
-          body: rendered,
-          templateName: recipient.campaign.template.name,
-          status: "PENDING",
-        },
-      });
-
-      await sendMessageViaSocket(message.id);
-
-      await prisma.campaignRecipient.update({
-        where: { id: recipientId },
-        data: { status: "SENT", messageId: message.id, sentAt: new Date() },
-      });
-
-      await prisma.campaign.update({
-        where: { id: campaignId },
-        data: { sentCount: { increment: 1 } },
-      });
-
-      await prisma.contact.update({
-        where: { id: recipient.contactId },
-        data: { lastMessageAt: new Date() },
-      });
-      return;
-    }
+    const result = await sendEmailMessage({
+      to: recipient.contact.email,
+      subject,
+      html,
+      pdfUrl: recipient.campaign.template.pdfUrl || undefined,
+      trackingId: recipientId,
+      account: sendingInbox || undefined,
+    });
 
     const conversation = await prisma.conversation.upsert({
       where: {
         contactId_channel: {
           contactId: recipient.contactId,
-          channel,
+          channel: "EMAIL",
         },
       },
       create: {
         contactId: recipient.contactId,
-        channel,
+        channel: "EMAIL",
         lastMessageAt: new Date(),
-        lastMessagePreview: preview.slice(0, 140),
+        lastMessagePreview: subject.slice(0, 140),
       },
       update: {
         lastMessageAt: new Date(),
-        lastMessagePreview: preview.slice(0, 140),
+        lastMessagePreview: subject.slice(0, 140),
       },
     });
 
@@ -241,13 +152,13 @@ export async function processCampaignJob(job: Job<CampaignJobData>) {
         conversationId: conversation.id,
         contactId: recipient.contactId,
         campaignId,
-        channel,
+        channel: "EMAIL",
         direction: "OUTBOUND",
-        type: channel === "EMAIL" ? "email" : "template",
+        type: "email",
         subject,
-        body: recipient.campaign.template.body,
+        body: html,
         templateName: recipient.campaign.template.name,
-        metaMessageId: externalId,
+        metaMessageId: result.messageId,
         status: "SENT",
       },
     });
@@ -315,13 +226,14 @@ export async function enqueueCampaign(campaignId: string) {
   if (!campaign) throw new Error("Campaign not found");
 
   const queue = getCampaignQueue();
-  const limiter = Math.max(1, campaign.rateLimitPerSecond);
+  // Staggered humanized delay interval: ~3 to 8 seconds per message
+  const delayStepMs = Math.max(2000, 5000 / Math.max(1, campaign.rateLimitPerSecond));
 
   const jobs = campaign.recipients.map((r, index) => ({
     name: "send",
     data: { campaignId, recipientId: r.id } satisfies CampaignJobData,
     opts: {
-      delay: Math.floor(index / limiter) * 1000,
+      delay: index * delayStepMs,
       jobId: `${campaignId}-${r.id}`,
     },
   }));
@@ -344,7 +256,7 @@ export function startCampaignWorker() {
     async (job) => processCampaignJob(job),
     {
       connection: getConnection(),
-      concurrency: 5,
+      concurrency: 3,
     },
   );
 

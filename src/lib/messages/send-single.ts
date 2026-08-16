@@ -1,7 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { renderTemplateString, sendEmailMessage } from "@/lib/email/client";
-import { enqueueSendMessage } from "@/lib/queue/whatsapp";
-import { isWhatsAppConnected, renderTemplateBody, sendMessageViaSocket } from "@/lib/whatsapp/sender";
+import { getNextSendingInbox } from "@/lib/email/rotator";
 
 function contactVars(contact: {
   name: string | null;
@@ -24,19 +23,18 @@ function contactVars(contact: {
 
 async function upsertConversation(params: {
   contactId: string;
-  channel: "WHATSAPP" | "EMAIL";
   preview: string;
 }) {
   return prisma.conversation.upsert({
     where: {
       contactId_channel: {
         contactId: params.contactId,
-        channel: params.channel,
+        channel: "EMAIL",
       },
     },
     create: {
       contactId: params.contactId,
-      channel: params.channel,
+      channel: "EMAIL",
       lastMessageAt: new Date(),
       lastMessagePreview: params.preview.slice(0, 140),
       status: "OPEN",
@@ -46,101 +44,6 @@ async function upsertConversation(params: {
       lastMessagePreview: params.preview.slice(0, 140),
       status: "OPEN",
     },
-  });
-}
-
-async function persistWhatsAppSend(params: {
-  contactId: string;
-  body: string;
-  type: "text" | "template";
-  templateName?: string;
-  preview: string;
-}) {
-  const conv = await upsertConversation({
-    contactId: params.contactId,
-    channel: "WHATSAPP",
-    preview: params.preview,
-  });
-
-  const message = await prisma.message.create({
-    data: {
-      conversationId: conv.id,
-      contactId: params.contactId,
-      channel: "WHATSAPP",
-      direction: "OUTBOUND",
-      type: params.type,
-      body: params.body,
-      templateName: params.templateName,
-      status: "PENDING",
-    },
-  });
-
-  await prisma.contact.update({
-    where: { id: params.contactId },
-    data: { lastMessageAt: new Date() },
-  });
-
-  const queued = !isWhatsAppConnected();
-  if (queued) {
-    await enqueueSendMessage(message.id);
-  } else {
-    await sendMessageViaSocket(message.id);
-  }
-
-  const saved = await prisma.message.findUnique({ where: { id: message.id } });
-  return { message: saved ?? message, conversationId: conv.id, queued };
-}
-
-export async function sendSingleWhatsAppText(params: {
-  contactId: string;
-  body: string;
-}) {
-  const contact = await prisma.contact.findUnique({
-    where: { id: params.contactId },
-  });
-  if (!contact) throw new Error("Client not found");
-  if (!contact.phone) throw new Error("Client has no phone number");
-  if (contact.optedOut) throw new Error("Client opted out of WhatsApp");
-
-  return persistWhatsAppSend({
-    contactId: contact.id,
-    body: params.body,
-    type: "text",
-    preview: params.body,
-  });
-}
-
-export async function sendSingleWhatsAppTemplate(params: {
-  contactId: string;
-  templateId: string;
-  bodyParams?: string[];
-}) {
-  const contact = await prisma.contact.findUnique({
-    where: { id: params.contactId },
-  });
-  if (!contact) throw new Error("Client not found");
-  if (!contact.phone) throw new Error("Client has no phone number");
-  if (contact.optedOut) throw new Error("Client opted out of WhatsApp");
-
-  const template = await prisma.template.findUnique({
-    where: { id: params.templateId },
-  });
-  if (!template || template.channel !== "WHATSAPP") {
-    throw new Error("WhatsApp template not found");
-  }
-
-  const body = renderTemplateBody(
-    template.body,
-    contactVars(contact),
-    params.bodyParams,
-  );
-
-  return persistWhatsAppSend({
-    contactId: contact.id,
-    body,
-    type: "template",
-    templateName: template.name,
-    preview: `Template: ${template.name}`,
   });
 }
 
@@ -154,13 +57,12 @@ export async function sendSingleEmail(params: {
     where: { id: params.contactId },
   });
   if (!contact) throw new Error("Client not found");
-  if (!contact.email) throw new Error("Client has no email");
-  if (contact.emailOptedOut) throw new Error("Client opted out of email");
+  if (!contact.email) throw new Error("Client has no email address");
+  if (contact.emailOptedOut) throw new Error("Client opted out of email outreach");
 
   const vars = contactVars(contact);
   let subject = params.subject;
   let html = params.body;
-
   let pdfUrl: string | undefined = undefined;
 
   if (params.templateId) {
@@ -177,7 +79,6 @@ export async function sendSingleEmail(params: {
 
   const conv = await upsertConversation({
     contactId: contact.id,
-    channel: "EMAIL",
     preview: subject,
   });
 
@@ -194,15 +95,19 @@ export async function sendSingleEmail(params: {
     },
   });
 
+  // Rotate and get healthiest available sending inbox
+  const sendingInbox = await getNextSendingInbox();
+
   const result = await sendEmailMessage({
     to: contact.email,
     subject,
     html: html.includes("<")
       ? html
-      : `<p style="font-family:IBM Plex Sans,Arial,sans-serif;white-space:pre-wrap">${html}</p>`,
+      : `<p style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;white-space:pre-wrap">${html}</p>`,
     text: html.replace(/<[^>]+>/g, " ").trim(),
     pdfUrl,
     trackingId: message.id,
+    account: sendingInbox || undefined,
   });
 
   if (result?.messageId) {
@@ -218,18 +123,4 @@ export async function sendSingleEmail(params: {
   });
 
   return { message, conversationId: conv.id };
-}
-
-export async function getWhatsAppWindowStatus(contactId: string) {
-  const conversation = await prisma.conversation.findUnique({
-    where: {
-      contactId_channel: { contactId, channel: "WHATSAPP" },
-    },
-  });
-
-  return {
-    open: true,
-    expiresAt: null,
-    conversationId: conversation?.id ?? null,
-  };
 }

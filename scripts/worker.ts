@@ -1,13 +1,13 @@
 import { startCampaignWorker } from "../src/lib/queue/campaign";
-import { startSendWorker } from "../src/lib/queue/whatsapp";
-import { startControlWorker } from "../src/lib/queue/whatsapp-control";
-import { start } from "../src/lib/whatsapp/session";
+import { checkDailyReset } from "../src/lib/email/rotator";
 
-console.log("Starting Dispatch worker…");
-start();
+console.log("Starting DEVSYNX Email Outreach Worker…");
 startCampaignWorker();
-startSendWorker();
-startControlWorker();
 
-// Keep process alive
+// Periodically check daily limit counter resets every hour
+setInterval(() => {
+  void checkDailyReset();
+}, 3600_000);
+
+// Keep worker process alive
 setInterval(() => {}, 60_000);

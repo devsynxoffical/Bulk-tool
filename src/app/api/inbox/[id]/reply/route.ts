@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/api";
-import { sendSingleWhatsAppText } from "@/lib/messages/send-single";
 import { sendEmailMessage } from "@/lib/email/client";
+import { getNextSendingInbox } from "@/lib/email/rotator";
 
 const schema = z.object({
   body: z.string().min(1).max(4096),
@@ -31,58 +31,46 @@ export async function POST(
   }
 
   try {
-    if (conversation.channel === "EMAIL") {
-      if (!conversation.contact.email) {
-        return NextResponse.json(
-          { error: "Contact has no email" },
-          { status: 400 },
-        );
-      }
-
-      const result = await sendEmailMessage({
-        to: conversation.contact.email,
-        subject: `Re: ${conversation.lastMessagePreview || "Your message"}`,
-        html: `<p style="font-family:IBM Plex Sans,Arial,sans-serif;white-space:pre-wrap">${parsed.data.body}</p>`,
-        text: parsed.data.body,
-      });
-
-      const message = await prisma.message.create({
-        data: {
-          conversationId: conversation.id,
-          contactId: conversation.contactId,
-          channel: "EMAIL",
-          direction: "OUTBOUND",
-          type: "email",
-          subject: `Re: ${conversation.lastMessagePreview || "Your message"}`,
-          body: parsed.data.body,
-          metaMessageId: result.messageId,
-          status: "SENT",
-        },
-      });
-
-      await prisma.conversation.update({
-        where: { id: conversation.id },
-        data: {
-          lastMessageAt: new Date(),
-          lastMessagePreview: parsed.data.body.slice(0, 140),
-        },
-      });
-
-      return NextResponse.json(message, { status: 201 });
-    }
-
-    if (!conversation.contact.phone) {
+    if (!conversation.contact.email) {
       return NextResponse.json(
-        { error: "Contact has no phone number" },
+        { error: "Contact has no email address" },
         { status: 400 },
       );
     }
 
-    const result = await sendSingleWhatsAppText({
-      contactId: conversation.contactId,
-      body: parsed.data.body,
+    const sendingInbox = await getNextSendingInbox();
+
+    const result = await sendEmailMessage({
+      to: conversation.contact.email,
+      subject: `Re: ${conversation.lastMessagePreview || "Outreach message"}`,
+      html: `<p style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;white-space:pre-wrap">${parsed.data.body}</p>`,
+      text: parsed.data.body,
+      account: sendingInbox || undefined,
     });
-    return NextResponse.json(result, { status: 201 });
+
+    const message = await prisma.message.create({
+      data: {
+        conversationId: conversation.id,
+        contactId: conversation.contactId,
+        channel: "EMAIL",
+        direction: "OUTBOUND",
+        type: "email",
+        subject: `Re: ${conversation.lastMessagePreview || "Outreach message"}`,
+        body: parsed.data.body,
+        metaMessageId: result.messageId,
+        status: "SENT",
+      },
+    });
+
+    await prisma.conversation.update({
+      where: { id: conversation.id },
+      data: {
+        lastMessageAt: new Date(),
+        lastMessagePreview: parsed.data.body.slice(0, 140),
+      },
+    });
+
+    return NextResponse.json(message, { status: 201 });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Send failed";
     return NextResponse.json({ error: message }, { status: 502 });

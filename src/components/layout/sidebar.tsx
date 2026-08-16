@@ -13,19 +13,21 @@ import {
   FileText,
   PenSquare,
   Mail,
+  ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const nav = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
   { href: "/emails", label: "Sent Email Tracker", icon: MailCheck },
-  { href: "/inbox", label: "Inbox", icon: MessageSquare },
-  { href: "/compose", label: "Compose Message", icon: PenSquare },
+  { href: "/inbox", label: "Inbox & Replies", icon: MessageSquare },
+  { href: "/compose", label: "Compose Email", icon: PenSquare },
   { href: "/campaigns", label: "Outreach Campaigns", icon: Megaphone },
-  { href: "/templates", label: "Email & WA Templates", icon: FileText },
-  { href: "/leads", label: "Lead Finder", icon: Search },
+  { href: "/templates", label: "Email Templates", icon: FileText },
+  { href: "/leads", label: "Lead Finder & Scraper", icon: Search },
+  { href: "/verifier", label: "Email Verifier", icon: ShieldCheck },
   { href: "/contacts", label: "Client Database", icon: Users },
-  { href: "/settings", label: "Settings", icon: Settings },
+  { href: "/settings", label: "Engine Settings", icon: Settings },
 ];
 
 export function Sidebar() {
@@ -41,13 +43,13 @@ export function Sidebar() {
           <p className="truncate text-sm font-bold tracking-tight text-zinc-900">
             DEVSYNX Suite
           </p>
-          <p className="truncate text-[10px] text-zinc-400">Email &amp; WhatsApp Outreach</p>
+          <p className="truncate text-[10px] text-zinc-400">Cold Email & Lead Suite</p>
         </div>
       </div>
 
       <nav className="flex-1 space-y-0.5 p-2 overflow-y-auto">
         <p className="px-2.5 pb-1.5 pt-2 text-[10px] font-medium uppercase tracking-wider text-zinc-400">
-          Outreach Modules
+          Email Outreach
         </p>
         {nav.map((item) => {
           const active =
@@ -80,16 +82,10 @@ export function Sidebar() {
 
       <div className="border-t border-zinc-200 p-3">
         <div className="rounded-md border border-blue-100 bg-blue-50/50 px-2.5 py-2">
-          <p className="text-[11px] font-semibold text-blue-900">Active Channels</p>
-          <div className="mt-1.5 flex items-center gap-3 text-[11px] text-zinc-700 font-medium">
-            <span className="inline-flex items-center gap-1">
-              <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
-              Email (Resend)
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              WhatsApp
-            </span>
+          <p className="text-[11px] font-semibold text-blue-900">Cold Email Engine</p>
+          <div className="mt-1.5 flex items-center gap-2 text-[11px] text-zinc-700 font-medium">
+            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span>Multi-Inbox & Verifier Active</span>
           </div>
         </div>
       </div>

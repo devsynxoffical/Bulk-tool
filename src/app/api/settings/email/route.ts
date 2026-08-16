@@ -4,7 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/api";
 
 const schema = z.object({
-  provider: z.enum(["RESEND", "SMTP"]).default("RESEND"),
+  id: z.string().optional(),
+  provider: z.enum(["RESEND", "SMTP"]).default("SMTP"),
   apiKey: z.string().optional(),
   host: z.string().optional(),
   port: z.number().int().min(1).max(65535).optional(),
@@ -14,33 +15,38 @@ const schema = z.object({
   fromEmail: z.string().email(),
   fromName: z.string().optional(),
   signature: z.string().optional(),
+  dailyLimit: z.number().int().min(5).max(5000).optional().default(50),
+  isActive: z.boolean().optional().default(true),
 });
 
 export async function GET() {
   const { error } = await requireSession();
   if (error) return error;
 
-  const account = await prisma.emailAccount.findFirst({
-    orderBy: { updatedAt: "desc" },
+  const accounts = await prisma.emailAccount.findMany({
+    orderBy: { createdAt: "desc" },
   });
 
-  if (!account) return NextResponse.json(null);
+  const formatted = accounts.map((acc) => ({
+    id: acc.id,
+    provider: acc.provider || "SMTP",
+    apiKey: acc.apiKey ? "••••••••" : "",
+    hasApiKey: Boolean(acc.apiKey),
+    host: acc.host || "",
+    port: acc.port || 587,
+    secure: Boolean(acc.secure),
+    username: acc.username || "",
+    fromEmail: acc.fromEmail,
+    fromName: acc.fromName,
+    signature: acc.signature || "",
+    dailyLimit: acc.dailyLimit || 50,
+    sentToday: acc.sentToday || 0,
+    healthScore: acc.healthScore || 100,
+    isActive: acc.isActive,
+    hasPassword: Boolean(acc.password),
+  }));
 
-  return NextResponse.json({
-    id: account.id,
-    provider: account.provider || "RESEND",
-    apiKey: account.apiKey ? "••••••••" : "",
-    hasApiKey: Boolean(account.apiKey),
-    host: account.host || "",
-    port: account.port || 587,
-    secure: Boolean(account.secure),
-    username: account.username || "",
-    fromEmail: account.fromEmail,
-    fromName: account.fromName,
-    signature: account.signature || "",
-    isActive: account.isActive,
-    hasPassword: Boolean(account.password),
-  });
+  return NextResponse.json({ accounts: formatted });
 }
 
 export async function POST(req: NextRequest) {
@@ -53,26 +59,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { provider, apiKey, password, signature, ...rest } = parsed.data;
-  const existing = await prisma.emailAccount.findFirst();
-
-  if (provider === "RESEND" && !apiKey && !existing?.apiKey) {
-    return NextResponse.json(
-      { error: "Please enter a valid Resend API key (e.g. re_123456...)" },
-      { status: 400 },
-    );
-  }
+  const { id, provider, apiKey, password, signature, dailyLimit, isActive, ...rest } = parsed.data;
 
   const updateData: Record<string, unknown> = {
     ...rest,
     provider,
     signature: signature ?? "",
-    isActive: true,
+    dailyLimit: dailyLimit ?? 50,
+    isActive: isActive ?? true,
   };
 
   if (apiKey && !apiKey.includes("••••")) {
-    updateData.apiKey = apiKey;
-  } else if (!existing && apiKey) {
     updateData.apiKey = apiKey;
   }
 
@@ -80,31 +77,33 @@ export async function POST(req: NextRequest) {
     updateData.password = password;
   }
 
-  const account = existing
-    ? await prisma.emailAccount.update({
-        where: { id: existing.id },
-        data: updateData,
-      })
-    : await prisma.emailAccount.create({
-        data: {
-          ...updateData,
-          fromEmail: rest.fromEmail,
-          password: password ?? "",
-        } as any,
-      });
+  let account;
+  if (id) {
+    account = await prisma.emailAccount.update({
+      where: { id },
+      data: updateData,
+    });
+  } else {
+    account = await prisma.emailAccount.create({
+      data: {
+        ...updateData,
+        fromEmail: rest.fromEmail,
+        password: password ?? "",
+      } as any,
+    });
+  }
 
-  return NextResponse.json({
-    id: account.id,
-    provider: account.provider,
-    apiKey: account.apiKey ? "••••••••" : "",
-    hasApiKey: Boolean(account.apiKey),
-    host: account.host || "",
-    port: account.port || 587,
-    secure: Boolean(account.secure),
-    username: account.username || "",
-    fromEmail: account.fromEmail,
-    fromName: account.fromName,
-    signature: account.signature,
-    isActive: account.isActive,
-  });
+  return NextResponse.json({ success: true, account });
+}
+
+export async function DELETE(req: NextRequest) {
+  const { error } = await requireSession();
+  if (error) return error;
+
+  const id = req.nextUrl.searchParams.get("id");
+  if (!id) return NextResponse.json({ error: "Account ID is missing" }, { status: 400 });
+
+  await prisma.emailAccount.delete({ where: { id } });
+
+  return NextResponse.json({ success: true });
 }

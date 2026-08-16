@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, FileCode, Loader2, Mail, Send, Server, ShieldCheck, Sparkles } from "lucide-react";
+import { CheckCircle2, FileCode, Loader2, Mail, Send, Server, ShieldCheck, Sparkles, Plus, Trash2, Globe, RefreshCw, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Textarea } from "@/components/ui/input";
 import {
@@ -11,6 +11,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 
 type EmailAccount = {
   id: string;
@@ -24,13 +25,32 @@ type EmailAccount = {
   fromEmail: string;
   fromName: string | null;
   signature?: string;
+  dailyLimit: number;
+  sentToday: number;
+  healthScore: number;
+  isActive: boolean;
   hasPassword: boolean;
 };
 
+type DomainRecord = {
+  id: string;
+  domainName: string;
+  spfVerified: boolean;
+  dkimVerified: boolean;
+  dmarcVerified: boolean;
+  mxVerified: boolean;
+  lastCheckedAt: string | null;
+};
+
 export function EmailForm() {
-  const [provider, setProvider] = useState<"RESEND" | "SMTP">("RESEND");
+  const [activeSubTab, setActiveSubTab] = useState<"inboxes" | "domains" | "signature">("inboxes");
+  const [accounts, setAccounts] = useState<EmailAccount[]>([]);
+  const [domains, setDomains] = useState<DomainRecord[]>([]);
+
+  // Form states
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [provider, setProvider] = useState<"RESEND" | "SMTP">("SMTP");
   const [apiKey, setApiKey] = useState("");
-  const [hasApiKey, setHasApiKey] = useState(false);
   const [host, setHost] = useState("");
   const [port, setPort] = useState(587);
   const [secure, setSecure] = useState(false);
@@ -38,8 +58,13 @@ export function EmailForm() {
   const [password, setPassword] = useState("");
   const [fromEmail, setFromEmail] = useState("");
   const [fromName, setFromName] = useState("");
+  const [dailyLimit, setDailyLimit] = useState(50);
 
-  // Email Signature state
+  // Domain form state
+  const [newDomain, setNewDomain] = useState("");
+  const [checkingDomain, setCheckingDomain] = useState(false);
+
+  // Signature state
   const [signature, setSignature] = useState("");
   const [sigName, setSigName] = useState("");
   const [sigTitle, setSigTitle] = useState("");
@@ -54,80 +79,38 @@ export function EmailForm() {
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   useEffect(() => {
-    void fetch("/api/settings/email")
-      .then((r) => r.json())
-      .then((data: EmailAccount | null) => {
-        if (!data) return;
-        setProvider(data.provider || "RESEND");
-        setApiKey(data.apiKey || "");
-        setHasApiKey(Boolean(data.hasApiKey));
-        setHost(data.host || "");
-        setPort(data.port || 587);
-        setSecure(Boolean(data.secure));
-        setUsername(data.username || "");
-        setFromEmail(data.fromEmail || "");
-        setFromName(data.fromName ?? "");
-        setSignature(data.signature ?? "");
-      });
+    loadData();
   }, []);
 
-  function generateSignaturePreset(style: "modern" | "corporate" | "clean") {
-    const name = sigName || fromName || "Syed Hassan";
-    const title = sigTitle || "Sales Director";
-    const company = sigCompany || "DEVSYNX";
-    const phone = sigPhone || "+1 (555) 019-2834";
-    const website = sigWebsite || "https://example.com";
-    const logo = sigLogo || "https://lh3.googleusercontent.com/a/default-user";
+  function loadData() {
+    fetch("/api/settings/email")
+      .then((r) => r.json())
+      .then((data: { accounts: EmailAccount[] }) => {
+        if (data.accounts && data.accounts.length > 0) {
+          setAccounts(data.accounts);
+          const first = data.accounts[0];
+          setSignature(first.signature || "");
+        }
+      });
 
-    let html = "";
-    if (style === "modern") {
-      html = `<div style="font-family: Arial, sans-serif; font-size: 14px; color: #1e293b; max-width: 450px;">
-  <table cellpadding="0" cellspacing="0" border="0">
-    <tr>
-      <td style="vertical-align: top; padding-right: 14px;">
-        <img src="${logo}" width="60" height="60" style="border-radius: 50%; object-fit: cover;" alt="${name}" />
-      </td>
-      <td style="vertical-align: top; border-left: 2px solid #2563eb; padding-left: 14px;">
-        <div style="font-size: 16px; font-weight: bold; color: #0f172a;">${name}</div>
-        <div style="font-size: 13px; color: #2563eb; font-weight: 500; margin-bottom: 6px;">${title} | ${company}</div>
-        <div style="font-size: 12px; color: #64748b; line-height: 1.5;">
-          📞 <strong>Phone:</strong> ${phone}<br/>
-          🌐 <strong>Web:</strong> <a href="${website}" style="color: #2563eb; text-decoration: none;">${website.replace(/^https?:\/\//, "")}</a>
-        </div>
-      </td>
-    </tr>
-  </table>
-</div>`;
-    } else if (style === "corporate") {
-      html = `<div style="font-family: Helvetica, Arial, sans-serif; font-size: 13px; color: #334155;">
-  <div style="font-size: 15px; font-weight: bold; color: #0f172a;">${name}</div>
-  <div style="color: #475569; font-weight: 600; margin-bottom: 4px;">${title} &bull; ${company}</div>
-  <div style="height: 1px; background-color: #cbd5e1; width: 100%; margin: 8px 0;"></div>
-  <div style="color: #64748b; font-size: 12px;">
-    <span>Direct: ${phone}</span> &nbsp;|&nbsp; 
-    <span><a href="${website}" style="color: #0284c7; text-decoration: none;">${website.replace(/^https?:\/\//, "")}</a></span>
-  </div>
-</div>`;
-    } else {
-      html = `<div style="font-family: Georgia, serif; font-size: 14px; color: #1c1917;">
-  <p style="margin: 0; font-weight: bold; font-size: 15px;">${name}</p>
-  <p style="margin: 2px 0 6px 0; color: #78716c; font-style: italic; font-size: 13px;">${title}, ${company}</p>
-  <p style="margin: 0; font-size: 12px; color: #57534e;">m: ${phone} &bull; e: ${fromEmail || "hello@domain.com"}</p>
-</div>`;
-    }
-
-    setSignature(html);
+    fetch("/api/domains")
+      .then((r) => r.json())
+      .then((data: { domains: DomainRecord[] }) => {
+        if (data.domains) setDomains(data.domains);
+      });
   }
 
-  async function save(e: React.FormEvent) {
+  async function saveInbox(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
     setMessage(null);
 
     const body: Record<string, unknown> = {
+      id: editingId || undefined,
       provider,
       fromEmail,
       fromName: fromName || undefined,
+      dailyLimit: Number(dailyLimit) || 50,
       signature,
     };
 
@@ -153,19 +136,68 @@ export function EmailForm() {
       if (!res.ok) {
         setMessage({
           ok: false,
-          text: typeof data.error === "string" ? data.error : "Failed to save email settings.",
+          text: typeof data.error === "string" ? data.error : "Failed to save inbox account.",
         });
         return;
       }
 
-      setHasApiKey(Boolean(data.hasApiKey));
-      if (data.apiKey) setApiKey(data.apiKey);
-      setPassword("");
-      setMessage({ ok: true, text: "Email settings & Signature saved successfully." });
+      setMessage({ ok: true, text: "Inbox saved successfully for multi-inbox rotation." });
+      resetForm();
+      loadData();
     } catch {
       setSaving(false);
       setMessage({ ok: false, text: "An error occurred while saving." });
     }
+  }
+
+  async function deleteInbox(id: string) {
+    if (!confirm("Are you sure you want to remove this inbox?")) return;
+    await fetch(`/api/settings/email?id=${id}`, { method: "DELETE" });
+    loadData();
+  }
+
+  function resetForm() {
+    setEditingId(null);
+    setProvider("SMTP");
+    setApiKey("");
+    setHost("");
+    setPort(587);
+    setSecure(false);
+    setUsername("");
+    setPassword("");
+    setFromEmail("");
+    setFromName("");
+    setDailyLimit(50);
+  }
+
+  async function addAndAuditDomain(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newDomain.trim()) return;
+
+    setCheckingDomain(true);
+    try {
+      const res = await fetch("/api/domains", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domainName: newDomain.trim() }),
+      });
+      const data = await res.json();
+      setCheckingDomain(false);
+      if (res.ok) {
+        setNewDomain("");
+        loadData();
+      } else {
+        alert(data.error || "Domain check failed");
+      }
+    } catch {
+      setCheckingDomain(false);
+      alert("Failed to check domain DNS");
+    }
+  }
+
+  async function deleteDomain(id: string) {
+    await fetch(`/api/domains?id=${id}`, { method: "DELETE" });
+    loadData();
   }
 
   async function sendTestEmail() {
@@ -184,7 +216,7 @@ export function EmailForm() {
       } else {
         setMessage({
           ok: true,
-          text: `Test email sent successfully to ${data.sentTo}! Check your inbox.`,
+          text: `Test email sent successfully to ${data.sentTo}!`,
         });
       }
     } catch {
@@ -193,306 +225,377 @@ export function EmailForm() {
     }
   }
 
+  function generateSignaturePreset(style: "modern" | "corporate") {
+    const name = sigName || fromName || "Syed Hassan";
+    const title = sigTitle || "Director of Outreach";
+    const company = sigCompany || "DEVSYNX";
+    const phone = sigPhone || "+1 (555) 019-2834";
+    const website = sigWebsite || "https://example.com";
+    const logo = sigLogo || "https://lh3.googleusercontent.com/a/default-user";
+
+    let html = "";
+    if (style === "modern") {
+      html = `<div style="font-family: Arial, sans-serif; font-size: 14px; color: #1e293b; max-width: 450px;">
+  <table cellpadding="0" cellspacing="0" border="0">
+    <tr>
+      <td style="vertical-align: top; padding-right: 14px;">
+        <img src="${logo}" width="56" height="56" style="border-radius: 50%; object-fit: cover;" alt="${name}" />
+      </td>
+      <td style="vertical-align: top; border-left: 2px solid #2563eb; padding-left: 14px;">
+        <div style="font-size: 15px; font-weight: bold; color: #0f172a;">${name}</div>
+        <div style="font-size: 13px; color: #2563eb; font-weight: 500; margin-bottom: 4px;">${title} | ${company}</div>
+        <div style="font-size: 12px; color: #64748b;">
+          Direct: ${phone}<br/>
+          Web: <a href="${website}" style="color: #2563eb; text-decoration: none;">${website.replace(/^https?:\/\//, "")}</a>
+        </div>
+      </td>
+    </tr>
+  </table>
+</div>`;
+    } else {
+      html = `<div style="font-family: Helvetica, Arial, sans-serif; font-size: 13px; color: #334155;">
+  <div style="font-size: 15px; font-weight: bold; color: #0f172a;">${name}</div>
+  <div style="color: #475569; font-weight: 600; margin-bottom: 4px;">${title} &bull; ${company}</div>
+  <div style="height: 1px; background-color: #cbd5e1; width: 100%; margin: 6px 0;"></div>
+  <div style="color: #64748b; font-size: 12px;">
+    <span>m: ${phone}</span> &nbsp;|&nbsp; 
+    <span><a href="${website}" style="color: #0284c7; text-decoration: none;">${website.replace(/^https?:\/\//, "")}</a></span>
+  </div>
+</div>`;
+    }
+
+    setSignature(html);
+  }
+
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <CardTitle>Email Delivery Settings</CardTitle>
-              <CardDescription>
-                Configure Resend API (Recommended) or custom SMTP to send emails for campaigns & leads.
-              </CardDescription>
-            </div>
-            <div className="inline-flex rounded-lg border border-zinc-200 bg-zinc-100 p-1">
-              <button
-                type="button"
-                onClick={() => setProvider("RESEND")}
-                className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition ${
-                  provider === "RESEND"
-                    ? "bg-white text-zinc-900 shadow-xs"
-                    : "text-zinc-600 hover:text-zinc-900"
-                }`}
-              >
-                <ShieldCheck className="h-3.5 w-3.5 text-blue-600" />
-                Resend API (Recommended)
-              </button>
-              <button
-                type="button"
-                onClick={() => setProvider("SMTP")}
-                className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition ${
-                  provider === "SMTP"
-                    ? "bg-white text-zinc-900 shadow-xs"
-                    : "text-zinc-600 hover:text-zinc-900"
-                }`}
-              >
-                <Server className="h-3.5 w-3.5 text-zinc-600" />
-                SMTP Server
-              </button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={save} className="space-y-4">
-            {provider === "RESEND" ? (
-              <div className="space-y-4 rounded-lg border border-blue-100 bg-blue-50/40 p-4">
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <Label>Resend API Key</Label>
-                    <a
-                      href="https://resend.com/api-keys"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-xs text-blue-600 underline hover:text-blue-800"
-                    >
-                      Get API Key on Resend.com
-                    </a>
-                  </div>
-                  <Input
-                    type="password"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    placeholder={hasApiKey ? "•••••••••••• (Key Configured)" : "re_123456789..."}
-                    required={!hasApiKey}
-                    className="font-mono"
-                  />
-                  <p className="text-[11px] text-zinc-500">
-                    Resend provides high deliverability email sending with zero setup.
-                  </p>
+      {/* Sub-Navigation Tabs */}
+      <div className="flex border-b border-zinc-200 gap-6">
+        <button
+          onClick={() => setActiveSubTab("inboxes")}
+          className={`pb-3 text-sm font-semibold border-b-2 transition ${
+            activeSubTab === "inboxes"
+              ? "border-blue-600 text-blue-600"
+              : "border-transparent text-zinc-500 hover:text-zinc-900"
+          }`}
+        >
+          📮 Connected Inboxes ({accounts.length})
+        </button>
+        <button
+          onClick={() => setActiveSubTab("domains")}
+          className={`pb-3 text-sm font-semibold border-b-2 transition ${
+            activeSubTab === "domains"
+              ? "border-blue-600 text-blue-600"
+              : "border-transparent text-zinc-500 hover:text-zinc-900"
+          }`}
+        >
+          🌐 Domain &amp; DNS Verification ({domains.length})
+        </button>
+        <button
+          onClick={() => setActiveSubTab("signature")}
+          className={`pb-3 text-sm font-semibold border-b-2 transition ${
+            activeSubTab === "signature"
+              ? "border-blue-600 text-blue-600"
+              : "border-transparent text-zinc-500 hover:text-zinc-900"
+          }`}
+        >
+          ✍️ Email Signature Builder
+        </button>
+      </div>
+
+      {/* 1. Multi-Inbox Tab */}
+      {activeSubTab === "inboxes" && (
+        <div className="space-y-6">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle className="text-base font-semibold">Active Sending Mailboxes</CardTitle>
+                <CardDescription>
+                  Inboxes are rotated automatically using round-robin to protect deliverability.
+                </CardDescription>
+              </div>
+              <Button onClick={resetForm} size="sm" className="bg-blue-600 hover:bg-blue-700">
+                <Plus className="h-4 w-4 mr-1" /> Add Mailbox
+              </Button>
+            </CardHeader>
+            <CardContent>
+              {accounts.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-zinc-300 p-8 text-center text-sm text-zinc-500">
+                  No sending inboxes connected yet. Add an SMTP or Resend mailbox below to begin sending.
+                </div>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {accounts.map((acc) => (
+                    <div key={acc.id} className="rounded-lg border border-zinc-200 bg-white p-4 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                          <span className="font-semibold text-sm text-zinc-900">{acc.fromEmail}</span>
+                        </div>
+                        <Badge tone="default" className="text-xs">
+                          {acc.provider}
+                        </Badge>
+                      </div>
+
+                      <div className="flex items-center justify-between text-xs text-zinc-500">
+                        <span>Daily Limit: <strong>{acc.sentToday} / {acc.dailyLimit}</strong> sent</span>
+                        <span>Health: <strong className="text-emerald-600">{acc.healthScore}%</strong></span>
+                      </div>
+
+                      <div className="flex justify-end gap-2 pt-2 border-t border-zinc-100">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-xs text-rose-600 hover:bg-rose-50"
+                          onClick={() => deleteInbox(acc.id)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Add / Edit Inbox Form */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base font-semibold">
+                {editingId ? "Edit Mailbox Account" : "Connect New Sending Mailbox"}
+              </CardTitle>
+              <CardDescription>Support Gmail, Outlook, Resend, or custom SMTP servers</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={saveInbox} className="space-y-4">
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant={provider === "SMTP" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setProvider("SMTP")}
+                  >
+                    <Server className="h-3.5 w-3.5 mr-1" /> Custom SMTP Server
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={provider === "RESEND" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setProvider("RESEND")}
+                  >
+                    <ShieldCheck className="h-3.5 w-3.5 mr-1" /> Resend API
+                  </Button>
                 </div>
 
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <Label>Sender Email Address (From)</Label>
-                    <Input
-                      type="email"
-                      value={fromEmail}
-                      onChange={(e) => setFromEmail(e.target.value)}
-                      placeholder="onboarding@resend.dev or hello@yourdomain.com"
-                      required
-                    />
+                {provider === "SMTP" ? (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label>SMTP Host</Label>
+                      <Input
+                        value={host}
+                        onChange={(e) => setHost(e.target.value)}
+                        placeholder="smtp.gmail.com or smtp.office365.com"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Port</Label>
+                      <Input
+                        type="number"
+                        value={port}
+                        onChange={(e) => setPort(Number(e.target.value))}
+                        placeholder="587"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Username / Mailbox Email</Label>
+                      <Input
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        placeholder="you@domain.com"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Password / App Password</Label>
+                      <Input
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="••••••••••••"
+                      />
+                    </div>
                   </div>
+                ) : (
                   <div className="space-y-1.5">
-                    <Label>Sender Name (From Name)</Label>
-                    <Input
-                      value={fromName}
-                      onChange={(e) => setFromName(e.target.value)}
-                      placeholder="My Company"
-                    />
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-4 rounded-lg border border-zinc-200 bg-zinc-50/50 p-4">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <Label>SMTP Host</Label>
-                    <Input
-                      value={host}
-                      onChange={(e) => setHost(e.target.value)}
-                      placeholder="smtp.gmail.com"
-                      required
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Port</Label>
-                    <Input
-                      type="number"
-                      value={port}
-                      onChange={(e) => setPort(Number(e.target.value))}
-                      placeholder="587"
-                      required
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Username</Label>
-                    <Input
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value)}
-                      placeholder="you@domain.com"
-                      required
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Password / App Password</Label>
+                    <Label>Resend API Key</Label>
                     <Input
                       type="password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="SMTP Password"
+                      value={apiKey}
+                      onChange={(e) => setApiKey(e.target.value)}
+                      placeholder="re_123456789..."
+                      required
                     />
                   </div>
+                )}
+
+                <div className="grid gap-4 sm:grid-cols-3">
                   <div className="space-y-1.5">
-                    <Label>Sender Email Address</Label>
+                    <Label>From Email Address</Label>
                     <Input
                       type="email"
                       value={fromEmail}
                       onChange={(e) => setFromEmail(e.target.value)}
-                      placeholder="you@domain.com"
+                      placeholder="sales@company.com"
                       required
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label>Sender Name</Label>
+                    <Label>From Name</Label>
                     <Input
                       value={fromName}
                       onChange={(e) => setFromName(e.target.value)}
-                      placeholder="My Company"
+                      placeholder="Syed Hassan"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Daily Send Cap</Label>
+                    <Input
+                      type="number"
+                      value={dailyLimit}
+                      onChange={(e) => setDailyLimit(Number(e.target.value))}
+                      placeholder="50"
                     />
                   </div>
                 </div>
 
-                <label className="flex items-center gap-2 text-sm text-zinc-700">
-                  <input
-                    type="checkbox"
-                    checked={secure}
-                    onChange={(e) => setSecure(e.target.checked)}
-                    className="h-4 w-4 rounded border-zinc-300"
-                  />
-                  Use SSL/TLS (Port 465)
-                </label>
-              </div>
-            )}
-
-            {/* Signature Builder Section */}
-            <div className="mt-6 space-y-4 rounded-xl border border-zinc-200 bg-white p-5 shadow-xs">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="text-sm font-semibold text-zinc-900 flex items-center gap-1.5">
-                    <FileCode className="h-4 w-4 text-purple-600" />
-                    HTML Email Signature
-                  </h4>
-                  <p className="text-xs text-zinc-500">
-                    Automatically appended to the bottom of all outgoing email campaigns and direct messages.
-                  </p>
-                </div>
-                <div className="flex gap-1.5">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-8 text-xs"
-                    onClick={() => generateSignaturePreset("modern")}
-                  >
-                    <Sparkles className="h-3 w-3 text-purple-600" />
-                    Modern Preset
+                <div className="flex items-center justify-between pt-2">
+                  <Button type="submit" disabled={saving} className="bg-blue-600 hover:bg-blue-700">
+                    {saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Mail className="h-4 w-4 mr-1" />}
+                    Save Mailbox to Rotation Pool
                   </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-8 text-xs"
-                    onClick={() => generateSignaturePreset("corporate")}
-                  >
-                    Corporate Preset
-                  </Button>
+
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="email"
+                      placeholder="Send test to..."
+                      value={testEmailTarget}
+                      onChange={(e) => setTestEmailTarget(e.target.value)}
+                      className="w-44 text-xs"
+                    />
+                    <Button type="button" variant="outline" size="sm" onClick={sendTestEmail} disabled={testing}>
+                      {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5 mr-1" />}
+                      Test Send
+                    </Button>
+                  </div>
                 </div>
-              </div>
 
-              <div className="grid gap-3 sm:grid-cols-3">
-                <Input
-                  placeholder="Your Name (e.g. Syed Hassan)"
-                  value={sigName}
-                  onChange={(e) => setSigName(e.target.value)}
-                  className="text-xs"
-                />
-                <Input
-                  placeholder="Job Title (e.g. Founder & CEO)"
-                  value={sigTitle}
-                  onChange={(e) => setSigTitle(e.target.value)}
-                  className="text-xs"
-                />
-                <Input
-                  placeholder="Company (e.g. DEVSYNX)"
-                  value={sigCompany}
-                  onChange={(e) => setSigCompany(e.target.value)}
-                  className="text-xs"
-                />
-                <Input
-                  placeholder="Phone Number"
-                  value={sigPhone}
-                  onChange={(e) => setSigPhone(e.target.value)}
-                  className="text-xs"
-                />
-                <Input
-                  placeholder="Website URL"
-                  value={sigWebsite}
-                  onChange={(e) => setSigWebsite(e.target.value)}
-                  className="text-xs"
-                />
-                <Input
-                  placeholder="Logo / Photo Image URL"
-                  value={sigLogo}
-                  onChange={(e) => setSigLogo(e.target.value)}
-                  className="text-xs"
-                />
-              </div>
+                {message && (
+                  <div className={`p-3 rounded-md text-xs ${message.ok ? "bg-emerald-50 text-emerald-800 border border-emerald-200" : "bg-rose-50 text-rose-800 border border-rose-200"}`}>
+                    {message.text}
+                  </div>
+                )}
+              </form>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
-              <div className="space-y-1.5">
-                <Label className="text-xs text-zinc-600">HTML Signature Markup</Label>
-                <Textarea
-                  value={signature}
-                  onChange={(e) => setSignature(e.target.value)}
-                  placeholder="<div style='font-family: Arial...'>Best regards,<br/><b>Your Name</b></div>"
-                  rows={4}
-                  className="font-mono text-xs"
-                />
-              </div>
-
-              {signature ? (
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-medium text-zinc-500">Live Signature Preview</Label>
-                  <div
-                    className="rounded-lg border border-zinc-200 bg-zinc-50/70 p-4 shadow-xs"
-                    dangerouslySetInnerHTML={{ __html: signature }}
-                  />
-                </div>
-              ) : null}
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-              <Button type="submit" disabled={saving}>
-                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
-                {saving ? "Saving…" : `Save ${provider === "RESEND" ? "Resend" : "SMTP"} Settings & Signature`}
-              </Button>
-
-              <div className="flex items-center gap-2">
+      {/* 2. Domain & DNS Tab */}
+      {activeSubTab === "domains" && (
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base font-semibold">Connect &amp; Audit Sending Domains</CardTitle>
+              <CardDescription>Verify SPF, DKIM, and DMARC DNS records to guarantee inbox placement.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <form onSubmit={addAndAuditDomain} className="flex gap-2">
                 <Input
-                  type="email"
-                  placeholder="Test email address"
-                  value={testEmailTarget}
-                  onChange={(e) => setTestEmailTarget(e.target.value)}
-                  className="w-48 text-xs"
+                  placeholder="e.g. mycompany.com"
+                  value={newDomain}
+                  onChange={(e) => setNewDomain(e.target.value)}
                 />
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={sendTestEmail}
-                  disabled={testing || (!hasApiKey && provider === "RESEND")}
-                >
-                  {testing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5 text-blue-600" />}
-                  Send Test Email
+                <Button type="submit" disabled={checkingDomain} className="bg-blue-600 hover:bg-blue-700">
+                  {checkingDomain ? <RefreshCw className="h-4 w-4 animate-spin mr-1" /> : <Globe className="h-4 w-4 mr-1" />}
+                  Audit DNS Records
                 </Button>
+              </form>
+
+              <div className="space-y-3">
+                {domains.map((d) => (
+                  <div key={d.id} className="rounded-lg border border-zinc-200 bg-white p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Globe className="h-4 w-4 text-blue-600" />
+                        <span className="font-bold text-sm text-zinc-900">{d.domainName}</span>
+                      </div>
+                      <Button variant="ghost" size="sm" onClick={() => deleteDomain(d.id)} className="h-7 text-xs text-rose-600">
+                        Remove
+                      </Button>
+                    </div>
+
+                    <div className="grid gap-2 sm:grid-cols-4 text-xs">
+                      <div className={`p-2 rounded-md border ${d.spfVerified ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-amber-50 border-amber-200 text-amber-800"}`}>
+                        <strong>SPF:</strong> {d.spfVerified ? "✅ Verified" : "⚠️ Missing v=spf1"}
+                      </div>
+                      <div className={`p-2 rounded-md border ${d.dkimVerified ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-amber-50 border-amber-200 text-amber-800"}`}>
+                        <strong>DKIM:</strong> {d.dkimVerified ? "✅ Verified" : "⚠️ Missing Selector"}
+                      </div>
+                      <div className={`p-2 rounded-md border ${d.dmarcVerified ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-amber-50 border-amber-200 text-amber-800"}`}>
+                        <strong>DMARC:</strong> {d.dmarcVerified ? "✅ Verified" : "⚠️ Missing _dmarc TXT"}
+                      </div>
+                      <div className={`p-2 rounded-md border ${d.mxVerified ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-rose-50 border-rose-200 text-rose-800"}`}>
+                        <strong>MX:</strong> {d.mxVerified ? "✅ Verified" : "❌ No MX Record"}
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* 3. Signature Builder Tab */}
+      {activeSubTab === "signature" && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base font-semibold">HTML Signature Builder</CardTitle>
+            <CardDescription>Appended automatically to every outbound email</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => generateSignaturePreset("modern")}>
+                <Sparkles className="h-3.5 w-3.5 mr-1 text-purple-600" /> Modern Preset
+              </Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => generateSignaturePreset("corporate")}>
+                Corporate Preset
+              </Button>
             </div>
 
-            {message ? (
-              <div
-                className={`flex items-start gap-2 rounded-md p-3 text-sm ${
-                  message.ok
-                    ? "border border-emerald-200 bg-emerald-50 text-emerald-800"
-                    : "border border-red-200 bg-red-50 text-red-700"
-                }`}
-              >
-                {message.ok ? (
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-                ) : null}
-                <span>{message.text}</span>
-              </div>
-            ) : null}
-          </form>
-        </CardContent>
-      </Card>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Input placeholder="Your Name" value={sigName} onChange={(e) => setSigName(e.target.value)} />
+              <Input placeholder="Job Title" value={sigTitle} onChange={(e) => setSigTitle(e.target.value)} />
+              <Input placeholder="Company" value={sigCompany} onChange={(e) => setSigCompany(e.target.value)} />
+            </div>
+
+            <Textarea
+              value={signature}
+              onChange={(e) => setSignature(e.target.value)}
+              placeholder="HTML markup will appear here..."
+              rows={4}
+              className="font-mono text-xs"
+            />
+
+            {signature && (
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-4" dangerouslySetInnerHTML={{ __html: signature }} />
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

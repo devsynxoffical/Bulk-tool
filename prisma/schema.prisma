@@ -65,44 +65,47 @@ model User {
   updatedAt    DateTime @updatedAt
 }
 
-model WhatsAppAccount {
-  id                 String   @id @default(cuid())
-  phoneNumberId      String
-  wabaId             String
-  accessToken        String
-  displayPhoneNumber String?
-  businessName       String?
-  webhookVerifyToken String
-  isActive           Boolean  @default(true)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
-}
-
-model WhatsAppSession {
-  id              String    @id @default(cuid())
-  status          String    @default("DISCONNECTED")
-  qrCode          String?
-  phoneNumber     String?
-  lastConnectedAt DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-}
-
 model EmailAccount {
+  id            String   @id @default(cuid())
+  provider      String   @default("SMTP")
+  apiKey        String?
+  host          String?
+  port          Int?     @default(587)
+  secure        Boolean? @default(false)
+  username      String?
+  password      String?
+  fromEmail     String
+  fromName      String?
+  signature     String?  @db.Text
+  dailyLimit    Int      @default(50)
+  sentToday     Int      @default(0)
+  lastSentAt    DateTime?
+  healthScore   Int      @default(100)
+  bounceCount   Int      @default(0)
+  warmupEnabled Boolean  @default(false)
+  warmupStage   Int      @default(1)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model SendingDomain {
+  id            String   @id @default(cuid())
+  domainName    String   @unique
+  spfVerified   Boolean  @default(false)
+  dkimVerified  Boolean  @default(false)
+  dmarcVerified Boolean  @default(false)
+  mxVerified    Boolean  @default(false)
+  lastCheckedAt DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model SuppressionList {
   id        String   @id @default(cuid())
-  provider  String   @default("RESEND")
-  apiKey    String?
-  host      String?
-  port      Int?     @default(587)
-  secure    Boolean? @default(false)
-  username  String?
-  password  String?
-  fromEmail String
-  fromName  String?
-  signature String?  @db.Text
-  isActive  Boolean  @default(true)
+  email     String   @unique
+  reason    String   @default("UNSUBSCRIBED") // UNSUBSCRIBED | BOUNCED | COMPLAINT
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
 }
 
 model Contact {
@@ -143,7 +146,7 @@ model Lead {
 
 model Template {
   id             String     @id @default(cuid())
-  channel        Channel    @default(WHATSAPP)
+  channel        Channel    @default(EMAIL)
   metaTemplateId String?
   name           String
   language       String     @default("en_US")

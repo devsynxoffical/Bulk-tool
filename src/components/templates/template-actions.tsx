@@ -13,6 +13,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { TemplatePreviewModal } from "@/components/templates/template-preview-modal";
+import { analyzeEmailSpamScore } from "@/lib/email/spam-checker";
 
 export function TemplateActions() {
   const router = useRouter();
@@ -157,6 +158,8 @@ export function TemplateActions() {
     router.refresh();
   }
 
+  const spamScore = analyzeEmailSpamScore(subject, body);
+
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Button onClick={() => setOpen((v) => !v)}>
@@ -274,6 +277,25 @@ export function TemplateActions() {
                         </Button>
                       </div>
                     </div>
+                  </div>
+
+                  {/* Live Spam & Deliverability Score Widget */}
+                  <div className={`p-3 rounded-lg border text-xs flex items-center justify-between ${
+                    spamScore.score >= 85
+                      ? "bg-emerald-50 border-emerald-200 text-emerald-900"
+                      : spamScore.score >= 65
+                      ? "bg-amber-50 border-amber-200 text-amber-900"
+                      : "bg-rose-50 border-rose-200 text-rose-900"
+                  }`}>
+                    <div>
+                      <span className="font-bold">Deliverability Score: {spamScore.score}/100</span> ({spamScore.rating})
+                      {spamScore.warnings.length > 0 && (
+                        <p className="mt-0.5 opacity-85">⚠️ {spamScore.warnings[0]}</p>
+                      )}
+                    </div>
+                    <span className="font-semibold text-xs px-2 py-0.5 rounded bg-white/70">
+                      {spamScore.score >= 85 ? "Inbox Ready" : "Optimization Recommended"}
+                    </span>
                   </div>
 
                   <div className="grid gap-3 sm:grid-cols-2">

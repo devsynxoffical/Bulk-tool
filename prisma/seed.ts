@@ -1,73 +1,18 @@
 import bcrypt from "bcryptjs";
-import { PrismaClient, type Channel } from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
 const sampleTemplates: Array<{
-  channel: Channel;
+  channel: "EMAIL";
   name: string;
   language: string;
   category: string;
   status: string;
   subject?: string;
-  header?: string;
   body: string;
-  footer?: string;
   isSample: boolean;
 }> = [
-  {
-    channel: "WHATSAPP",
-    name: "service_welcome",
-    language: "en_US",
-    category: "UTILITY",
-    status: "APPROVED",
-    header: "Welcome",
-    body: "Hi {{1}}, thank you for choosing our services. Reply here anytime — we’re happy to help with bookings or questions.",
-    footer: "Your service team",
-    isSample: true,
-  },
-  {
-    channel: "WHATSAPP",
-    name: "appointment_reminder",
-    language: "en_US",
-    category: "UTILITY",
-    status: "APPROVED",
-    header: "Appointment reminder",
-    body: "Hi {{1}}, reminder: your {{2}} appointment is on {{3}} at {{4}}. Reply YES to confirm or RESCHEDULE to change.",
-    footer: "See you soon",
-    isSample: true,
-  },
-  {
-    channel: "WHATSAPP",
-    name: "consultation_invite",
-    language: "en_US",
-    category: "MARKETING",
-    status: "APPROVED",
-    header: "Free consultation",
-    body: "Hi {{1}}, book a free {{2}} consultation this week. We’ll review your needs and recommend the right plan. Reply BOOK to schedule.",
-    footer: "Reply STOP to opt out",
-    isSample: true,
-  },
-  {
-    channel: "WHATSAPP",
-    name: "service_offer",
-    language: "en_US",
-    category: "MARKETING",
-    status: "APPROVED",
-    header: "Exclusive offer",
-    body: "Hi {{1}}, enjoy {{2}} off {{3}} this month. Mention code {{4}} when you book. Valid until {{5}}.",
-    footer: "Reply STOP to opt out",
-    isSample: true,
-  },
-  {
-    channel: "WHATSAPP",
-    name: "service_followup",
-    language: "en_US",
-    category: "UTILITY",
-    status: "APPROVED",
-    body: "Hi {{1}}, thanks for your recent {{2}} session. How was your experience? Reply with feedback or book your next visit anytime.",
-    isSample: true,
-  },
   {
     channel: "EMAIL",
     name: "service_welcome_email",
@@ -75,29 +20,25 @@ const sampleTemplates: Array<{
     category: "UTILITY",
     status: "APPROVED",
     subject: "Welcome, {{name}} — we’re glad you’re here",
-    body: `<div style="font-family:IBM Plex Sans,Arial,sans-serif;color:#18181b;line-height:1.6">
+    body: `<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;color:#18181b;line-height:1.6">
   <h2 style="margin:0 0 12px;font-size:20px">Welcome, {{name}}</h2>
   <p style="margin:0 0 12px;color:#52525b">Thanks for connecting with our team. Whether you need a consultation, booking, or support, we’re here to help you get the most from our services.</p>
-  <p style="margin:0;color:#71717a;font-size:13px">— Your service team</p>
+  <p style="margin:0;color:#71717a;font-size:13px">— Your outreach team</p>
 </div>`,
     isSample: true,
   },
   {
     channel: "EMAIL",
-    name: "service_newsletter",
+    name: "cold_outreach_proposal",
     language: "en_US",
     category: "MARKETING",
     status: "APPROVED",
-    subject: "{{name}}, this month’s service tips & offers",
-    body: `<div style="font-family:IBM Plex Sans,Arial,sans-serif;color:#18181b;line-height:1.6">
+    subject: "Quick partnership query for {{company}}",
+    body: `<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;color:#18181b;line-height:1.6">
   <p style="margin:0 0 12px">Hi {{name}},</p>
-  <p style="margin:0 0 12px;color:#52525b">Here’s what’s new for clients this month:</p>
-  <ul style="margin:0 0 16px;padding-left:18px;color:#52525b">
-    <li>Seasonal service packages now available</li>
-    <li>Priority booking slots for returning clients</li>
-    <li>Tips to get better results between visits</li>
-  </ul>
-  <p style="margin:0;color:#a1a1aa;font-size:12px">You’re receiving this as a client. Unsubscribe anytime.</p>
+  <p style="margin:0 0 12px;color:#52525b">I noticed {{company}} is rapidly expanding outreach operations. We help growth teams automate cold email lead generation with zero-cost verifiers and multi-inbox rotation.</p>
+  <p style="margin:0 0 16px;color:#52525b">Would you be open for a brief 5-minute introductory call this week?</p>
+  <p style="margin:0;color:#71717a;font-size:13px">Best regards,</p>
 </div>`,
     isSample: true,
   },
@@ -107,25 +48,11 @@ const sampleTemplates: Array<{
     language: "en_US",
     category: "UTILITY",
     status: "APPROVED",
-    subject: "Your service quote is ready, {{name}}",
-    body: `<div style="font-family:IBM Plex Sans,Arial,sans-serif;color:#18181b;line-height:1.6">
+    subject: "Your service proposal is ready, {{name}}",
+    body: `<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;color:#18181b;line-height:1.6">
   <p style="margin:0 0 12px">Hi {{name}},</p>
-  <p style="margin:0 0 12px;color:#52525b">We’ve prepared a tailored quote based on your consultation. Review the details and reply to this email if you’d like to proceed or adjust the scope.</p>
+  <p style="margin:0 0 12px;color:#52525b">We’ve prepared a custom proposal based on your inquiry. Review the details and reply to this email if you’d like to proceed or adjust the scope.</p>
   <p style="margin:0;color:#71717a;font-size:13px">Happy to answer any questions.</p>
-</div>`,
-    isSample: true,
-  },
-  {
-    channel: "EMAIL",
-    name: "reactivate_clients",
-    language: "en_US",
-    category: "MARKETING",
-    status: "APPROVED",
-    subject: "We’d love to see you again, {{name}}",
-    body: `<div style="font-family:IBM Plex Sans,Arial,sans-serif;color:#18181b;line-height:1.6">
-  <p style="margin:0 0 12px">Hi {{name}},</p>
-  <p style="margin:0 0 12px;color:#52525b">It’s been a while since your last visit. Book again this month and enjoy priority scheduling plus a returning-client courtesy on select services.</p>
-  <p style="margin:0;color:#a1a1aa;font-size:12px">Prefer fewer emails? Update your preferences anytime.</p>
 </div>`,
     isSample: true,
   },
@@ -144,41 +71,6 @@ async function main() {
     create: { email, name, passwordHash, role: "ADMIN" },
   });
 
-  const verifyToken =
-    process.env.META_WEBHOOK_VERIFY_TOKEN || "whatsapp_bulk_verify_token";
-
-  const existing = await prisma.whatsAppAccount.findFirst();
-  if (!existing) {
-    await prisma.whatsAppAccount.create({
-      data: {
-        phoneNumberId: process.env.META_PHONE_NUMBER_ID || "pending",
-        wabaId: process.env.META_WABA_ID || "pending",
-        accessToken: process.env.META_ACCESS_TOKEN || "",
-        webhookVerifyToken: verifyToken,
-        businessName: "My Service Business",
-        isActive: Boolean(process.env.META_ACCESS_TOKEN),
-      },
-    });
-  }
-
-  // Remove old product-oriented sample templates
-  await prisma.template.deleteMany({
-    where: {
-      isSample: true,
-      name: {
-        in: [
-          "welcome_message",
-          "order_update",
-          "promo_offer",
-          "welcome_email",
-          "monthly_newsletter",
-          "invoice_notice",
-          "reengagement",
-        ],
-      },
-    },
-  });
-
   for (const t of sampleTemplates) {
     await prisma.template.upsert({
       where: {
@@ -192,9 +84,7 @@ async function main() {
         category: t.category,
         status: t.status,
         subject: t.subject,
-        header: t.header,
         body: t.body,
-        footer: t.footer,
         isSample: t.isSample,
       },
       create: t,
@@ -203,44 +93,33 @@ async function main() {
 
   const sampleContacts = [
     {
-      phone: "+15550001001",
       email: "alex@example.com",
       name: "Alex Morgan",
-      tags: ["sample", "vip", "returning"],
+      tags: ["sample", "lead", "verified"],
     },
     {
-      phone: "+15550001002",
       email: "sam@example.com",
       name: "Sam Rivera",
       tags: ["sample", "consultation"],
     },
     {
-      phone: null,
       email: "jordan@example.com",
       name: "Jordan Lee",
-      tags: ["sample", "quote"],
+      tags: ["sample", "outreach"],
     },
   ];
 
   for (const c of sampleContacts) {
-    if (c.phone) {
-      await prisma.contact.upsert({
-        where: { phone: c.phone },
-        update: { name: c.name, email: c.email, tags: c.tags },
-        create: c,
-      });
-    } else if (c.email) {
-      await prisma.contact.upsert({
-        where: { email: c.email },
-        update: { name: c.name, tags: c.tags },
-        create: c,
-      });
-    }
+    await prisma.contact.upsert({
+      where: { email: c.email },
+      update: { name: c.name, tags: c.tags },
+      create: c,
+    });
   }
 
   console.log(`Seeded admin: ${user.email}`);
-  console.log(`Seeded ${sampleTemplates.length} service-marketing templates`);
-  console.log(`Seeded ${sampleContacts.length} sample clients`);
+  console.log(`Seeded ${sampleTemplates.length} email templates`);
+  console.log(`Seeded ${sampleContacts.length} sample contacts`);
 }
 
 main()

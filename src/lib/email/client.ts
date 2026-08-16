@@ -25,10 +25,21 @@ export async function sendEmailMessage(params: {
   pdfUrl?: string;
   attachments?: EmailAttachment[];
   trackingId?: string;
+  account?: Awaited<ReturnType<typeof getActiveEmailAccount>>;
 }) {
-  const account = await getActiveEmailAccount();
+  const recipient = params.to.trim().toLowerCase();
+
+  // 1. Suppression check
+  const suppressed = await prisma.suppressionList.findUnique({
+    where: { email: recipient },
+  });
+  if (suppressed) {
+    throw new Error(`Email ${recipient} is on the Suppression List (${suppressed.reason}). Send aborted.`);
+  }
+
+  const account = params.account || (await getActiveEmailAccount());
   if (!account) {
-    throw new Error("Email account not configured in Settings.");
+    throw new Error("No active Email account configured in Settings.");
   }
 
   const acc = account as typeof account & {
@@ -38,11 +49,28 @@ export async function sendEmailMessage(params: {
   };
   const provider = acc.provider?.toUpperCase() || (acc.apiKey ? "RESEND" : "SMTP");
 
-  // 1. Prepare HTML body with Email Signature if configured
+  const baseUrl = process.env.NEXTAUTH_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+  const unsubUrl = `${baseUrl}/api/unsubscribe?email=${encodeURIComponent(recipient)}`;
+
+  // 2. Prepare HTML body with Email Signature & Unsubscribe Link
   let finalHtml = params.html;
+
+  // Substitute {{UnsubscribeLink}} placeholder if present
+  if (finalHtml.includes("{{UnsubscribeLink}}")) {
+    finalHtml = finalHtml.replace(/\{\{UnsubscribeLink\}\}/g, unsubUrl);
+  } else if (!finalHtml.includes("unsubscribe")) {
+    // Append minimal compliant footer
+    finalHtml += `
+      <div style="margin-top: 32px; padding-top: 16px; border-top: 1px solid #f1f5f9; font-size: 11px; color: #94a3b8; font-family: sans-serif;">
+        You received this email because you are in our outreach directory. 
+        <a href="${unsubUrl}" style="color: #64748b; text-decoration: underline;">Unsubscribe here</a>
+      </div>
+    `;
+  }
+
   if (acc.signature && acc.signature.trim() && !finalHtml.includes("email-signature-container")) {
     finalHtml += `
-      <div class="email-signature-container" style="margin-top: 32px; padding-top: 16px; border-top: 1px solid #e2e8f0; font-family: sans-serif; color: #334155;">
+      <div class="email-signature-container" style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #e2e8f0; font-family: sans-serif; color: #334155;">
         ${acc.signature}
       </div>
     `;
@@ -50,7 +78,6 @@ export async function sendEmailMessage(params: {
 
   // Embed open tracking pixel if trackingId is provided
   if (params.trackingId) {
-    const baseUrl = process.env.NEXTAUTH_URL || process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000";
     const trackPixel = `<img src="${baseUrl}/api/emails/track?id=${encodeURIComponent(params.trackingId)}" width="1" height="1" style="display:none !important; width:1px !important; height:1px !important;" alt="" />`;
     if (finalHtml.includes("</body>")) {
       finalHtml = finalHtml.replace("</body>", `${trackPixel}</body>`);
@@ -59,7 +86,7 @@ export async function sendEmailMessage(params: {
     }
   }
 
-  // 2. Prepare Attachments (PDFs or files)
+  // 3. Prepare Attachments (PDFs or files)
   const preparedAttachments: Array<{ filename: string; content?: string; path?: string }> = [];
 
   if (params.attachments && params.attachments.length > 0) {
@@ -82,7 +109,6 @@ export async function sendEmailMessage(params: {
           });
         }
       } else if (cleanUrl.startsWith("/uploads/")) {
-        // Read local uploaded file from disk
         const localPath = path.join(process.cwd(), "public", cleanUrl);
         const buffer = await fs.readFile(localPath);
         preparedAttachments.push({
@@ -97,7 +123,9 @@ export async function sendEmailMessage(params: {
     }
   }
 
-  // 3. Send via Resend API
+  let resultMessageId = `msg_${Date.now()}`;
+
+  // 4. Send via Resend API
   if (provider === "RESEND") {
     const apiKey = acc.apiKey || process.env.RESEND_API_KEY;
     if (!apiKey) {
@@ -110,10 +138,13 @@ export async function sendEmailMessage(params: {
 
     const resendBody: Record<string, unknown> = {
       from: fromAddress,
-      to: [params.to],
+      to: [recipient],
       subject: params.subject,
       html: finalHtml,
       text: params.text || finalHtml.replace(/<[^>]+>/g, " "),
+      headers: {
+        "List-Unsubscribe": `<${unsubUrl}>`,
+      },
     };
 
     if (preparedAttachments.length > 0) {
@@ -140,36 +171,54 @@ export async function sendEmailMessage(params: {
       );
     }
 
-    return { messageId: resData.id || `resend_${Date.now()}` };
+    resultMessageId = resData.id || resultMessageId;
+  } else {
+    // 5. Send via SMTP (Nodemailer)
+    if (!account.host || !account.username || !account.password) {
+      throw new Error("SMTP settings are incomplete. Please check Settings.");
+    }
+
+    const transporter = nodemailer.createTransport({
+      host: account.host,
+      port: account.port || 587,
+      secure: Boolean(account.secure),
+      auth: {
+        user: account.username,
+        pass: account.password,
+      },
+    });
+
+    const info = await transporter.sendMail({
+      from: account.fromName
+        ? `"${account.fromName}" <${account.fromEmail}>`
+        : account.fromEmail,
+      to: recipient,
+      subject: params.subject,
+      html: finalHtml,
+      text: params.text || finalHtml.replace(/<[^>]+>/g, " "),
+      headers: {
+        "List-Unsubscribe": `<${unsubUrl}>`,
+      },
+      attachments: preparedAttachments.length > 0 ? preparedAttachments : undefined,
+    });
+
+    resultMessageId = info.messageId || resultMessageId;
   }
 
-  // 4. Send via SMTP (Nodemailer)
-  if (!account.host || !account.username || !account.password) {
-    throw new Error("SMTP settings are incomplete. Please check Settings.");
+  // Update sending statistics on the account
+  try {
+    await prisma.emailAccount.update({
+      where: { id: account.id },
+      data: {
+        sentToday: { increment: 1 },
+        lastSentAt: new Date(),
+      },
+    });
+  } catch {
+    // ignore non-critical stats update error
   }
 
-  const transporter = nodemailer.createTransport({
-    host: account.host,
-    port: account.port || 587,
-    secure: Boolean(account.secure),
-    auth: {
-      user: account.username,
-      pass: account.password,
-    },
-  });
-
-  const info = await transporter.sendMail({
-    from: account.fromName
-      ? `"${account.fromName}" <${account.fromEmail}>`
-      : account.fromEmail,
-    to: params.to,
-    subject: params.subject,
-    html: finalHtml,
-    text: params.text || finalHtml.replace(/<[^>]+>/g, " "),
-    attachments: preparedAttachments.length > 0 ? preparedAttachments : undefined,
-  });
-
-  return { messageId: info.messageId };
+  return { messageId: resultMessageId };
 }
 
 export function renderTemplateString(

@@ -11,11 +11,10 @@ export default async function OverviewPage() {
   const [
     contacts,
     campaigns,
-    messagesToday,
-    unread,
+    emailsToday,
+    inboxAccounts,
     recentCampaigns,
     recentMessages,
-    waSession,
   ] = await Promise.all([
     prisma.contact.count(),
     prisma.campaign.count(),
@@ -24,7 +23,7 @@ export default async function OverviewPage() {
         createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) },
       },
     }),
-    prisma.conversation.aggregate({ _sum: { unreadCount: true } }),
+    prisma.emailAccount.count({ where: { isActive: true } }),
     prisma.campaign.findMany({
       take: 5,
       orderBy: { createdAt: "desc" },
@@ -35,23 +34,20 @@ export default async function OverviewPage() {
       orderBy: { createdAt: "desc" },
       include: { contact: true },
     }),
-    prisma.whatsAppSession.findUnique({ where: { id: "default" } }),
   ]);
-
-  const waConnected = waSession?.status === "CONNECTED";
 
   return (
     <div>
       <PageHeader
-        title="Overview"
-        description="Client outreach and WhatsApp campaigns."
+        title="Email Outreach Overview"
+        description="Cold email campaigns, multi-inbox rotation, and lead outreach performance."
         actions={
           <>
             <Link href="/compose">
-              <Button>Start messaging</Button>
+              <Button>Compose Email</Button>
             </Link>
             <Link href="/campaigns/new">
-              <Button variant="outline">New campaign</Button>
+              <Button variant="outline">New Cold Campaign</Button>
             </Link>
           </>
         }
@@ -60,37 +56,34 @@ export default async function OverviewPage() {
       <div className="mb-5 grid gap-3 sm:grid-cols-2">
         <div className="rounded-lg border border-zinc-200 bg-white px-4 py-3">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-zinc-900">WhatsApp</p>
-            <Badge tone={waConnected ? "success" : "warning"}>
-              {waConnected ? "Connected" : "Setup needed"}
+            <p className="text-sm font-medium text-zinc-900">Multi-Inbox Rotation Pool</p>
+            <Badge tone={inboxAccounts > 0 ? "success" : "warning"}>
+              {inboxAccounts > 0 ? `${inboxAccounts} Mailboxes Active` : "Setup Needed"}
             </Badge>
           </div>
           <p className="mt-1 text-xs text-zinc-500">
-            {waConnected
-              ? `+${waSession?.phoneNumber || ""}`.trim()
-              : "Link your WhatsApp number in Settings"}
+            {inboxAccounts > 0
+              ? "Weighted round-robin active with daily send limits"
+              : "Connect email accounts in Settings to enable outreach rotation"}
           </p>
         </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Clients" value={formatNumber(contacts)} />
-        <StatCard label="Campaigns" value={formatNumber(campaigns)} />
-        <StatCard label="Messages today" value={formatNumber(messagesToday)} />
-        <StatCard
-          label="Unread inbox"
-          value={formatNumber(unread._sum.unreadCount || 0)}
-        />
+        <StatCard label="Client Leads" value={formatNumber(contacts)} />
+        <StatCard label="Outreach Campaigns" value={formatNumber(campaigns)} />
+        <StatCard label="Emails Sent Today" value={formatNumber(emailsToday)} />
+        <StatCard label="Active Sending Inboxes" value={formatNumber(inboxAccounts)} />
       </div>
 
       <div className="mt-5 grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Recent campaigns</CardTitle>
+            <CardTitle>Recent Cold Campaigns</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
             {recentCampaigns.length === 0 ? (
-              <p className="text-sm text-zinc-500">No campaigns yet.</p>
+              <p className="text-sm text-zinc-500">No campaigns launched yet.</p>
             ) : (
               recentCampaigns.map((c) => (
                 <Link
@@ -117,11 +110,11 @@ export default async function OverviewPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Latest messages</CardTitle>
+            <CardTitle>Latest Outbound &amp; Inbound Emails</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
             {recentMessages.length === 0 ? (
-              <p className="text-sm text-zinc-500">No messages yet.</p>
+              <p className="text-sm text-zinc-500">No email records yet.</p>
             ) : (
               recentMessages.map((m) => (
                 <div
@@ -129,9 +122,9 @@ export default async function OverviewPage() {
                   className="flex items-start justify-between gap-3 rounded-md border border-zinc-100 px-3 py-2.5"
                 >
                   <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-zinc-900">
-                        {m.contact.name || m.contact.phone || m.contact.email}
-                      </p>
+                    <p className="truncate text-sm font-medium text-zinc-900">
+                      {m.contact.name || m.contact.email || m.contact.phone}
+                    </p>
                     <p className="truncate text-xs text-zinc-500">
                       {m.direction === "INBOUND" ? "← " : "→ "}
                       {m.subject || m.body || m.templateName || m.type}
