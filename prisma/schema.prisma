@@ -90,15 +90,19 @@ model EmailAccount {
 }
 
 model SendingDomain {
-  id            String   @id @default(cuid())
-  domainName    String   @unique
-  spfVerified   Boolean  @default(false)
-  dkimVerified  Boolean  @default(false)
-  dmarcVerified Boolean  @default(false)
-  mxVerified    Boolean  @default(false)
-  lastCheckedAt DateTime?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id             String   @id @default(cuid())
+  domainName     String   @unique
+  dkimPrivateKey String?  @db.Text
+  dkimPublicKey  String?  @db.Text
+  dkimSelector   String   @default("dkim")
+  spfVerified    Boolean  @default(false)
+  dkimVerified   Boolean  @default(false)
+  dmarcVerified  Boolean  @default(false)
+  mxVerified     Boolean  @default(false)
+  isVerified     Boolean  @default(false)
+  lastCheckedAt  DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 }
 
 model SuppressionList {

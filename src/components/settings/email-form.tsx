@@ -35,10 +35,13 @@ type EmailAccount = {
 type DomainRecord = {
   id: string;
   domainName: string;
+  dkimSelector?: string;
+  dkimPublicKey?: string;
   spfVerified: boolean;
   dkimVerified: boolean;
   dmarcVerified: boolean;
   mxVerified: boolean;
+  isVerified?: boolean;
   lastCheckedAt: string | null;
 };
 
@@ -537,9 +540,12 @@ export function EmailForm() {
               <div className="space-y-3">
                 {domains.map((d) => {
                   const isExpanded = expandedDomain === d.id;
+                  const selector = d.dkimSelector || "dkim";
                   const spfValue = `v=spf1 include:${d.domainName} ~all`;
                   const dmarcValue = `v=DMARC1; p=none; rua=mailto:dmarc@${d.domainName}`;
-                  const dkimValue = `v=DKIM1; k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC...`;
+                  const dkimValue = d.dkimPublicKey
+                    ? `v=DKIM1; k=rsa; p=${d.dkimPublicKey}`
+                    : `v=DKIM1; k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQ...`;
 
                   return (
                     <div key={d.id} className="rounded-lg border border-zinc-200 bg-white p-4 space-y-3">
@@ -621,7 +627,7 @@ export function EmailForm() {
 
                             <div className="rounded border border-blue-200 bg-white p-2.5 space-y-1">
                               <div className="flex items-center justify-between text-zinc-700">
-                                <span><strong>Type:</strong> TXT &bull; <strong>Host/Name:</strong> <code>default._domainkey</code></span>
+                                <span><strong>Type:</strong> TXT &bull; <strong>Host/Name:</strong> <code>{selector}._domainkey</code></span>
                                 <Button
                                   variant="ghost"
                                   size="sm"

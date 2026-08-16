@@ -174,8 +174,21 @@ export async function sendEmailMessage(params: {
     resultMessageId = resData.id || resultMessageId;
   } else {
     // 5. Send via SMTP (Nodemailer)
-    if (!account.host || !account.username || !account.password) {
-      throw new Error("SMTP settings are incomplete. Please check Settings.");
+    // Check if domain has cryptographic DKIM key pair configured
+    const senderDomainName = account.fromEmail.split("@").pop()?.toLowerCase();
+    let dkimConfig: { domainName: string; keySelector: string; privateKey: string } | undefined = undefined;
+
+    if (senderDomainName) {
+      const domainRecord = await prisma.sendingDomain.findUnique({
+        where: { domainName: senderDomainName },
+      });
+      if (domainRecord && domainRecord.dkimPrivateKey) {
+        dkimConfig = {
+          domainName: senderDomainName,
+          keySelector: domainRecord.dkimSelector || "dkim",
+          privateKey: domainRecord.dkimPrivateKey,
+        };
+      }
     }
 
     const transporter = nodemailer.createTransport({
@@ -186,7 +199,8 @@ export async function sendEmailMessage(params: {
         user: account.username,
         pass: account.password,
       },
-    });
+      dkim: dkimConfig,
+    } as nodemailer.TransportOptions);
 
     const info = await transporter.sendMail({
       from: account.fromName

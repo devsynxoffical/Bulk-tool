@@ -5,14 +5,14 @@ import { TemplatesList } from "./templates-list";
 
 export default async function TemplatesPage() {
   const templates = await prisma.template.findMany({
-    orderBy: { updatedAt: "desc" },
+    orderBy: { createdAt: "desc" },
   });
 
   return (
     <div>
       <PageHeader
-        title="Templates"
-        description="Saved message templates for WhatsApp and Email campaigns."
+        title="Email Templates"
+        description="Saved email templates with live deliverability and spam score analysis."
         actions={<TemplateActions />}
       />
       <TemplatesList templates={templates} />

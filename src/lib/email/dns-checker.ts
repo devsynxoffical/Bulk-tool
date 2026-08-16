@@ -9,7 +9,10 @@ export interface DnsCheckResult {
   isFullyConfigured: boolean;
 }
 
-export async function verifyDomainDns(domainName: string): Promise<DnsCheckResult> {
+export async function verifyDomainDns(
+  domainName: string,
+  customSelector: string = "dkim",
+): Promise<DnsCheckResult> {
   const domain = domainName.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
 
   let spfRecord: string | null = null;
@@ -37,8 +40,8 @@ export async function verifyDomainDns(domainName: string): Promise<DnsCheckResul
     // ignore
   }
 
-  // 3. Resolve DKIM record (default selector 'resend', 'default', or 'google')
-  const selectors = ["default", "google", "resend", "k1", "s1"];
+  // 3. Resolve DKIM record (checks customSelector, then fallbacks)
+  const selectors = Array.from(new Set([customSelector, "dkim", "default", "google", "resend", "k1", "s1"]));
   for (const selector of selectors) {
     try {
       const dkimTxt = await dns.promises.resolveTxt(`${selector}._domainkey.${domain}`);
@@ -72,6 +75,6 @@ export async function verifyDomainDns(domainName: string): Promise<DnsCheckResul
     dkim: { verified: dkimVerified, record: dkimRecord },
     dmarc: { verified: dmarcVerified, record: dmarcRecord },
     mx: { verified: mxVerified, records: mxHostList },
-    isFullyConfigured: spfVerified && dmarcVerified && mxVerified,
+    isFullyConfigured: spfVerified && dkimVerified && dmarcVerified && mxVerified,
   };
 }

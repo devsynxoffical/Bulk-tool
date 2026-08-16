@@ -201,11 +201,10 @@ export function TemplateActions() {
                   <Select
                     value={channel}
                     onChange={(e) =>
-                      setChannel(e.target.value as "WHATSAPP" | "EMAIL")
+                      setChannel(e.target.value as "EMAIL")
                     }
                   >
                     <option value="EMAIL">Email</option>
-                    <option value="WHATSAPP">WhatsApp</option>
                   </Select>
                 </div>
                 <div className="space-y-1.5">

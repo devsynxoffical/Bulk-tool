@@ -269,44 +269,6 @@ export function InboxClient({
               className="h-9 w-full rounded-lg border-0 bg-[#202c33] pl-9 pr-3 text-sm text-[#e9edef] placeholder:text-[#8696a0] outline-none focus:ring-1 focus:ring-[#00a884]/40"
             />
           </div>
-          <div className="flex gap-1">
-            <button
-              type="button"
-              onClick={() => setChannelFilter("ALL")}
-              className={cn(
-                "rounded-full px-3 py-1 text-xs font-medium transition cursor-pointer",
-                channelFilter === "ALL"
-                  ? "bg-[#00a884] text-[#111b21]"
-                  : "bg-[#202c33] text-[#8696a0] hover:text-[#e9edef]",
-              )}
-            >
-              All
-            </button>
-            <button
-              type="button"
-              onClick={() => setChannelFilter("WHATSAPP")}
-              className={cn(
-                "rounded-full px-3 py-1 text-xs font-medium transition cursor-pointer",
-                channelFilter === "WHATSAPP"
-                  ? "bg-[#00a884] text-[#111b21]"
-                  : "bg-[#202c33] text-[#8696a0] hover:text-[#e9edef]",
-              )}
-            >
-              💬 WhatsApp
-            </button>
-            <button
-              type="button"
-              onClick={() => setChannelFilter("EMAIL")}
-              className={cn(
-                "rounded-full px-3 py-1 text-xs font-medium transition cursor-pointer",
-                channelFilter === "EMAIL"
-                  ? "bg-[#3b82f6] text-white"
-                  : "bg-[#202c33] text-[#8696a0] hover:text-[#e9edef]",
-              )}
-            >
-              ✉️ Email
-            </button>
-          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto">
@@ -504,22 +466,21 @@ export function InboxClient({
           </>
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center bg-[#222e35] px-6 text-center">
-            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#00a884]/15">
-              <MessageCircle className="h-8 w-8 text-[#00a884]" />
+            <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#2563eb]/15">
+              <MessageCircle className="h-8 w-8 text-[#2563eb]" />
             </div>
             <h2 className="text-2xl font-light text-[#e9edef]">
-              WhatsApp Inbox
+              Email Outreach Inbox
             </h2>
             <p className="mt-2 max-w-sm text-sm text-[#8696a0]">
-              Select a chat to talk with a client, or start a new WhatsApp
-              conversation.
+              Select an email thread to view responses, or compose a new direct email message.
             </p>
             <Link
               href="/compose"
-              className="mt-5 inline-flex items-center gap-2 rounded-full bg-[#00a884] px-4 py-2 text-sm font-medium text-[#111b21] hover:bg-[#06cf9c]"
+              className="mt-5 inline-flex items-center gap-2 rounded-full bg-[#2563eb] px-4 py-2 text-sm font-medium text-white hover:bg-[#1d4ed8]"
             >
               <PenSquare className="h-4 w-4" />
-              Start new messaging
+              Compose New Email
             </Link>
           </div>
         )}

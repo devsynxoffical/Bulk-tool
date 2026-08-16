@@ -1,17 +1,16 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Sans } from "next/font/google";
+import { Inter } from "next/font/google";
 import "./globals.css";
 
-const sans = IBM_Plex_Sans({
-  variable: "--font-sans",
+const inter = Inter({
   subsets: ["latin"],
-  weight: ["400", "500", "600"],
+  variable: "--font-inter",
 });
 
 export const metadata: Metadata = {
-  title: "WhatsApp Bulk — Inbox & Campaigns",
+  title: "DEVSYNX Email Suite — Cold Outreach & Scraper",
   description:
-    "WhatsApp inbox and bulk campaigns — bookings, follow-ups, and client outreach",
+    "Cold email outreach, multi-inbox rotation, zero-cost email verifier, and Google Maps lead scraper.",
 };
 
 export default function RootLayout({
@@ -20,8 +19,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${sans.variable} h-full`}>
-      <body className="min-h-full font-sans antialiased">{children}</body>
+    <html lang="en" className={inter.variable}>
+      <body className="font-sans antialiased text-zinc-900 bg-zinc-50 selection:bg-blue-100 selection:text-blue-900">
+        {children}
+      </body>
     </html>
   );
 }

@@ -5,12 +5,10 @@ export default function SettingsPage() {
   return (
     <div>
       <PageHeader
-        title="Settings"
-        description="Link your WhatsApp number and connect an email account for sending."
+        title="Engine Settings &amp; Infrastructure"
+        description="Configure multi-inbox rotation, audit domain SPF/DKIM/DMARC DNS records, and build HTML signatures."
       />
-      <div className="mx-auto max-w-3xl">
-        <SettingsClient />
-      </div>
+      <SettingsClient />
     </div>
   );
 }

@@ -5,29 +5,33 @@ import { ContactsClient } from "@/components/contacts/contacts-client";
 export default async function ContactsPage() {
   const contacts = await prisma.contact.findMany({
     orderBy: { createdAt: "desc" },
-    take: 1000,
+    take: 500,
   });
 
-  const serializedContacts = contacts.map((c) => ({
+  const serializable = contacts.map((c) => ({
     id: c.id,
-    name: c.name,
     phone: c.phone,
+    name: c.name,
     email: c.email,
     tags: c.tags,
     optedOut: c.optedOut,
     emailOptedOut: c.emailOptedOut,
-    customFields: (c.customFields as Record<string, unknown> | null) ?? null,
+    customFields:
+      c.customFields && typeof c.customFields === "object"
+        ? (c.customFields as Record<string, unknown>)
+        : null,
+    lastMessageAt: c.lastMessageAt ? c.lastMessageAt.toISOString() : null,
     createdAt: c.createdAt.toISOString(),
+    updatedAt: c.updatedAt.toISOString(),
   }));
 
   return (
     <div>
       <PageHeader
-        title="Clients & Leads"
-        description="Select, filter, and manage all your imported leads and clients for bulk WhatsApp and Email messaging."
+        title="Client Database &amp; Leads"
+        description="Manage imported scraped leads, verify email statuses, and organize audience tags."
       />
-
-      <ContactsClient initialContacts={serializedContacts} />
+      <ContactsClient initialContacts={serializable} />
     </div>
   );
 }

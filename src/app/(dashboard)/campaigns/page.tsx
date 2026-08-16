@@ -13,11 +13,11 @@ export default async function CampaignsPage() {
   return (
     <div>
       <PageHeader
-        title="Campaigns"
-        description="Promote services, book consultations, and follow up with leads via WhatsApp or Email."
+        title="Outreach Campaigns"
+        description="Launch cold email campaigns and track multi-inbox rotation delivery."
         actions={
           <Link href="/campaigns/new">
-            <Button>New campaign</Button>
+            <Button>New Cold Campaign</Button>
           </Link>
         }
       />
