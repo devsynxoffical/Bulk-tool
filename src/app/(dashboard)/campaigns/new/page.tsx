@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Users } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Select } from "@/components/ui/input";
@@ -24,13 +25,26 @@ type Template = {
   isSample: boolean;
 };
 
+type ContactSummary = {
+  id: string;
+  phone: string | null;
+  email: string | null;
+  tags: string[];
+  optedOut: boolean;
+  emailOptedOut: boolean;
+};
+
 export default function NewCampaignPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const initialTag = searchParams.get("tag") || "";
+
   const [allTemplates, setAllTemplates] = useState<Template[]>([]);
+  const [allContacts, setAllContacts] = useState<ContactSummary[]>([]);
   const [channel, setChannel] = useState<"WHATSAPP" | "EMAIL">("WHATSAPP");
   const [name, setName] = useState("");
   const [templateId, setTemplateId] = useState("");
-  const [tag, setTag] = useState("");
+  const [tag, setTag] = useState(initialTag);
   const [rate, setRate] = useState(10);
   const [var1, setVar1] = useState("name");
   const [loading, setLoading] = useState(false);
@@ -40,6 +54,12 @@ export default function NewCampaignPage() {
     void fetch("/api/templates")
       .then((r) => r.json())
       .then((data: Template[]) => setAllTemplates(data));
+
+    void fetch("/api/contacts")
+      .then((r) => r.json())
+      .then((data: ContactSummary[]) => {
+        if (Array.isArray(data)) setAllContacts(data);
+      });
   }, []);
 
   const templates = allTemplates.filter(
@@ -49,6 +69,18 @@ export default function NewCampaignPage() {
   if (selected === undefined && templates[0]) {
     setTemplateId(templates[0].id);
   }
+
+  // Calculate live matching leads
+  const matchingLeadsCount = allContacts.filter((c) => {
+    if (tag.trim()) {
+      if (!c.tags.includes(tag.trim())) return false;
+    }
+    if (channel === "WHATSAPP") {
+      return Boolean(c.phone && !c.optedOut);
+    } else {
+      return Boolean(c.email && !c.emailOptedOut);
+    }
+  }).length;
 
   function switchChannel(c: "WHATSAPP" | "EMAIL") {
     setChannel(c);
@@ -174,11 +206,17 @@ export default function NewCampaignPage() {
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label>Audience tag (optional)</Label>
+                <div className="flex items-center justify-between">
+                  <Label>Audience tag (optional)</Label>
+                  <span className="flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
+                    <Users className="h-3 w-3" />
+                    {matchingLeadsCount} Leads
+                  </span>
+                </div>
                 <Input
                   value={tag}
                   onChange={(e) => setTag(e.target.value)}
-                  placeholder="sample"
+                  placeholder="e.g. maps-leads or dentists"
                 />
               </div>
               <div className="space-y-1.5">
@@ -212,7 +250,7 @@ export default function NewCampaignPage() {
 
         <div className="flex gap-2">
           <Button type="submit" disabled={loading || !templates.length}>
-            {loading ? "Creating…" : "Create draft"}
+            {loading ? "Creating…" : `Create Campaign (${matchingLeadsCount} Leads)`}
           </Button>
           <Button type="button" variant="outline" onClick={() => router.back()}>
             Cancel
