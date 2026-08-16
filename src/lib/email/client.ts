@@ -19,10 +19,11 @@ export async function sendEmailMessage(params: {
     throw new Error("Email account not configured in Settings.");
   }
 
-  const provider = account.provider?.toUpperCase() || (account.apiKey ? "RESEND" : "SMTP");
+  const acc = account as typeof account & { provider?: string; apiKey?: string };
+  const provider = acc.provider?.toUpperCase() || (acc.apiKey ? "RESEND" : "SMTP");
 
   if (provider === "RESEND") {
-    const apiKey = account.apiKey || process.env.RESEND_API_KEY;
+    const apiKey = acc.apiKey || process.env.RESEND_API_KEY;
     if (!apiKey) {
       throw new Error("Resend API key is missing. Please set your Resend API Key in Settings.");
     }
