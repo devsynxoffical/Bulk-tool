@@ -7,6 +7,13 @@ echo "=== Starting WhatsApp Bulk Unified Single Service ==="
 export SCRAPER_PORT=8787
 export SCRAPER_URL="http://127.0.0.1:8787"
 
+# Start local embedded Redis server if REDIS_URL points to localhost/127.0.0.1 or is unconfigured
+REDIS_TARGET="${REDIS_URL:-redis://127.0.0.1:6379}"
+if [[ "$REDIS_TARGET" == *"127.0.0.1"* ]] || [[ "$REDIS_TARGET" == *"localhost"* ]]; then
+  echo "[Redis] Starting embedded local Redis server on port 6379..."
+  redis-server --daemonize yes --port 6379 || echo "Warning: local redis-server start skipped"
+fi
+
 # Run database migrations and seeding
 echo "[1/4] Running Prisma database setup..."
 npx prisma db push || echo "Warning: prisma db push failed or pending"

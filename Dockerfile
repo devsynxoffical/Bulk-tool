@@ -2,11 +2,12 @@ FROM node:20-bookworm-slim
 
 WORKDIR /app
 
-# Install Python 3, pip, bash, and Playwright Chromium OS dependencies
+# Install Python 3, pip, redis-server, bash, and Playwright Chromium OS dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     python3-venv \
+    redis-server \
     bash \
     ca-certificates \
     libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \

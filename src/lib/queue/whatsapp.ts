@@ -14,6 +14,11 @@ export function getConnection() {
       maxRetriesPerRequest: null,
       enableReadyCheck: false,
     });
+    connection.on("error", (err) => {
+      if (process.env.NODE_ENV !== "production") {
+        console.warn("Redis connection warning:", err.message);
+      }
+    });
   }
   return connection;
 }
