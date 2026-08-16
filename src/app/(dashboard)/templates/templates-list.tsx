@@ -1,10 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import { Eye, Paperclip } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/layout/page-header";
 import { TemplateActions } from "@/components/templates/template-actions";
+import { TemplatePreviewModal } from "@/components/templates/template-preview-modal";
 
 type TemplateItem = {
   id: string;
@@ -17,6 +20,7 @@ type TemplateItem = {
   body: string | null;
   header: string | null;
   footer: string | null;
+  pdfUrl?: string | null;
   isSample: boolean;
 };
 
@@ -32,6 +36,7 @@ function channelTone(channel: string) {
 
 export function TemplatesList({ templates }: { templates: TemplateItem[] }) {
   const [tab, setTab] = useState<"ALL" | "WHATSAPP" | "EMAIL">("ALL");
+  const [activePreviewTemplate, setActivePreviewTemplate] = useState<TemplateItem | null>(null);
 
   const filtered = templates.filter((t) => {
     if (tab === "WHATSAPP") return t.channel === "WHATSAPP";
@@ -105,23 +110,69 @@ export function TemplatesList({ templates }: { templates: TemplateItem[] }) {
                   {t.isSample ? <Badge>Sample</Badge> : null}
                 </div>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-3">
                 {t.header ? (
                   <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
                     {t.header}
                   </p>
                 ) : null}
-                <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-700">
-                  {t.body || "No body preview"}
-                </p>
+                
+                {t.channel === "EMAIL" && t.body?.includes("<") ? (
+                  <div className="line-clamp-4 rounded-md border border-zinc-100 bg-zinc-50/50 p-2.5 text-xs text-zinc-600 font-sans">
+                    <span className="font-semibold text-zinc-800">Subject: {t.subject}</span>
+                    <div dangerouslySetInnerHTML={{ __html: t.body.slice(0, 300) }} />
+                  </div>
+                ) : (
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-700">
+                    {t.body || "No body preview"}
+                  </p>
+                )}
+
+                {t.pdfUrl ? (
+                  <div className="flex items-center gap-1.5 text-xs text-blue-600">
+                    <Paperclip className="h-3.5 w-3.5" />
+                    <span className="truncate">Attached PDF document</span>
+                  </div>
+                ) : null}
+
                 {t.footer ? (
-                  <p className="mt-2 text-[11px] text-zinc-400">{t.footer}</p>
+                  <p className="text-[11px] text-zinc-400">{t.footer}</p>
+                ) : null}
+
+                {t.channel === "EMAIL" ? (
+                  <div className="pt-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setActivePreviewTemplate(t)}
+                      className="w-full flex items-center justify-center gap-1.5 text-xs border-blue-200 text-blue-700 hover:bg-blue-50"
+                    >
+                      <Eye className="h-3.5 w-3.5" />
+                      Preview Email Design (Desktop & Mobile)
+                    </Button>
+                  </div>
                 ) : null}
               </CardContent>
             </Card>
           ))}
         </div>
       )}
+
+      {/* Live Preview Modal */}
+      {activePreviewTemplate ? (
+        <TemplatePreviewModal
+          open={Boolean(activePreviewTemplate)}
+          onClose={() => setActivePreviewTemplate(null)}
+          template={{
+            name: activePreviewTemplate.name,
+            subject: activePreviewTemplate.subject,
+            body: activePreviewTemplate.body,
+            header: activePreviewTemplate.header,
+            footer: activePreviewTemplate.footer,
+            pdfUrl: activePreviewTemplate.pdfUrl,
+          }}
+        />
+      ) : null}
     </div>
   );
 }
