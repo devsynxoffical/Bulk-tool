@@ -1,4 +1,6 @@
 import nodemailer from "nodemailer";
+import { promises as fs } from "fs";
+import path from "path";
 import { prisma } from "@/lib/prisma";
 
 export async function getActiveEmailAccount() {
@@ -55,8 +57,8 @@ export async function sendEmailMessage(params: {
   if (params.pdfUrl && params.pdfUrl.trim()) {
     try {
       const cleanUrl = params.pdfUrl.trim();
-      const filename = cleanUrl.split("/").pop()?.split("?")[0] || "document.pdf";
-      const safeFilename = filename.toLowerCase().endsWith(".pdf") ? filename : `${filename}.pdf`;
+      const rawName = cleanUrl.split("/").pop()?.split("?")[0] || "document.pdf";
+      const safeFilename = rawName.toLowerCase().endsWith(".pdf") ? rawName : `${rawName}.pdf`;
 
       if (cleanUrl.startsWith("http://") || cleanUrl.startsWith("https://")) {
         const res = await fetch(cleanUrl);
@@ -66,14 +68,20 @@ export async function sendEmailMessage(params: {
             filename: safeFilename,
             content: buffer.toString("base64"),
           });
-        } else {
-          preparedAttachments.push({ filename: safeFilename, path: cleanUrl });
         }
+      } else if (cleanUrl.startsWith("/uploads/")) {
+        // Read local uploaded file from disk
+        const localPath = path.join(process.cwd(), "public", cleanUrl);
+        const buffer = await fs.readFile(localPath);
+        preparedAttachments.push({
+          filename: safeFilename,
+          content: buffer.toString("base64"),
+        });
       } else {
         preparedAttachments.push({ filename: safeFilename, path: cleanUrl });
       }
     } catch (e) {
-      console.warn("Failed to attach PDF from URL:", e);
+      console.warn("Failed to process attachment from pdfUrl:", e);
     }
   }
 

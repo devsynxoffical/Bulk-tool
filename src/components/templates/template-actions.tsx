@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Eye, FilePlus2, LayoutTemplate, Paperclip, Sparkles } from "lucide-react";
+import { Eye, FilePlus2, LayoutTemplate, Loader2, Paperclip, Sparkles, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
 import {
@@ -16,6 +16,8 @@ import { TemplatePreviewModal } from "@/components/templates/template-preview-mo
 
 export function TemplateActions() {
   const router = useRouter();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   const [open, setOpen] = useState(false);
   const [channel, setChannel] = useState<"WHATSAPP" | "EMAIL">("WHATSAPP");
   const [name, setName] = useState("");
@@ -23,9 +25,43 @@ export function TemplateActions() {
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [pdfUrl, setPdfUrl] = useState("");
+  const [pdfName, setPdfName] = useState("");
+  const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [previewOpen, setPreviewOpen] = useState(false);
+
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploading(true);
+    setError("");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+      setUploading(false);
+
+      if (!res.ok) {
+        setError(data.error || "Failed to upload file");
+        return;
+      }
+
+      setPdfUrl(data.url);
+      setPdfName(data.originalName || file.name);
+    } catch {
+      setUploading(false);
+      setError("File upload failed. Please try again.");
+    }
+  }
 
   function insertPreset(preset: "promo" | "newsletter" | "corporate" | "outreach") {
     if (preset === "promo") {
@@ -117,6 +153,7 @@ export function TemplateActions() {
     setSubject("");
     setBody("");
     setPdfUrl("");
+    setPdfName("");
     router.refresh();
   }
 
@@ -249,17 +286,56 @@ export function TemplateActions() {
                         required
                       />
                     </div>
+
                     <div className="space-y-1.5">
-                      <Label className="flex items-center gap-1">
-                        <Paperclip className="h-3.5 w-3.5 text-blue-600" />
-                        PDF Attachment URL (Optional)
+                      <Label className="flex items-center justify-between">
+                        <span className="flex items-center gap-1">
+                          <Paperclip className="h-3.5 w-3.5 text-blue-600" />
+                          PDF File Attachment
+                        </span>
                       </Label>
-                      <Input
-                        type="url"
-                        value={pdfUrl}
-                        onChange={(e) => setPdfUrl(e.target.value)}
-                        placeholder="https://example.com/brochure.pdf"
+
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".pdf,application/pdf"
+                        onChange={handleFileUpload}
+                        className="hidden"
                       />
+
+                      {pdfUrl ? (
+                        <div className="flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50/80 px-3 py-2 text-xs font-medium text-blue-900">
+                          <div className="flex items-center gap-1.5 truncate">
+                            <Paperclip className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+                            <span className="truncate">{pdfName || pdfUrl}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPdfUrl("");
+                              setPdfName("");
+                            }}
+                            className="ml-2 text-blue-600 hover:text-blue-900"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={uploading}
+                          className="w-full flex items-center justify-center gap-2 border-dashed border-zinc-300 text-xs text-zinc-700 hover:border-blue-400 hover:bg-blue-50/40"
+                        >
+                          {uploading ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Upload className="h-3.5 w-3.5 text-blue-600" />
+                          )}
+                          {uploading ? "Uploading PDF…" : "Upload PDF File from Device"}
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -288,7 +364,7 @@ export function TemplateActions() {
               ) : null}
 
               <div className="flex gap-2 pt-1">
-                <Button type="submit" disabled={loading}>
+                <Button type="submit" disabled={loading || uploading}>
                   {loading ? "Saving…" : "Create Template"}
                 </Button>
                 {channel === "EMAIL" ? (
