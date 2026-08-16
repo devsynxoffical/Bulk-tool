@@ -44,10 +44,10 @@ export default function LoginPage() {
             <Mail className="h-4 w-4 text-white" />
           </div>
           <h1 className="text-xl font-semibold tracking-tight text-zinc-900">
-            WhatsApp Bulk
+            DEVSYNX Email Suite
           </h1>
           <p className="mt-1 text-sm text-zinc-500">
-            WhatsApp inbox &amp; campaigns
+            Cold Outreach &amp; Lead Generation Platform
           </p>
         </div>
 

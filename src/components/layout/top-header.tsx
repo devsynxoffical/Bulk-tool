@@ -7,23 +7,25 @@ import { signOut } from "next-auth/react";
 import { Input } from "@/components/ui/input";
 
 const titles: Record<string, { title: string; crumb: string }> = {
-  "/": { title: "Overview", crumb: "WhatsApp Bulk" },
-  "/compose": { title: "Start messaging", crumb: "New chat" },
-  "/inbox": { title: "Inbox", crumb: "WhatsApp inbox" },
-  "/campaigns": { title: "Campaigns", crumb: "Client outreach" },
-  "/campaigns/new": { title: "New campaign", crumb: "Client outreach" },
-  "/leads": { title: "Lead Finder", crumb: "Google Maps leads" },
-  "/contacts": { title: "Clients", crumb: "Audience" },
-  "/templates": { title: "Templates", crumb: "Saved messages" },
-  "/settings": { title: "Settings", crumb: "Channel" },
+  "/": { title: "Overview", crumb: "DEVSYNX Email Suite" },
+  "/emails": { title: "Sent Email Tracker", crumb: "Email Outbox" },
+  "/compose": { title: "Compose Email", crumb: "Direct Email" },
+  "/inbox": { title: "Inbox & Replies", crumb: "Email Inbox" },
+  "/campaigns": { title: "Cold Campaigns", crumb: "Outreach" },
+  "/campaigns/new": { title: "New Campaign", crumb: "Cold Outreach" },
+  "/leads": { title: "Lead Finder", crumb: "Scraped Leads" },
+  "/verifier": { title: "Email Verifier", crumb: "Lead Validation" },
+  "/contacts": { title: "Client Database", crumb: "Audience" },
+  "/templates": { title: "Email Templates", crumb: "Templates" },
+  "/settings": { title: "Engine Settings", crumb: "Infrastructure" },
 };
 
 function resolveMeta(pathname: string) {
   if (titles[pathname]) return titles[pathname];
   if (pathname.startsWith("/campaigns/")) {
-    return { title: "Campaign details", crumb: "Client outreach" };
+    return { title: "Campaign Details", crumb: "Outreach" };
   }
-  return { title: "WhatsApp Bulk", crumb: "Inbox & campaigns" };
+  return { title: "DEVSYNX Email Suite", crumb: "Outreach & Scraper" };
 }
 
 export function TopHeader({
@@ -48,7 +50,7 @@ export function TopHeader({
         <div className="min-w-0">
           <div className="flex items-center gap-1.5 text-[11px] text-zinc-400">
             <Link href="/" className="hover:text-zinc-600">
-              WhatsApp Bulk
+              DEVSYNX Email Suite
             </Link>
             <span>/</span>
             <span>{meta.crumb}</span>

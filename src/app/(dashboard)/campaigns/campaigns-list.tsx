@@ -48,17 +48,6 @@ export function CampaignsList({ campaigns }: { campaigns: CampaignWithTemplate[]
         </button>
         <button
           type="button"
-          onClick={() => setTab("WHATSAPP")}
-          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold transition ${
-            tab === "WHATSAPP"
-              ? "border-emerald-600 text-emerald-600"
-              : "border-transparent text-zinc-500 hover:text-zinc-900"
-          }`}
-        >
-          <span>💬</span> WhatsApp ({campaigns.filter((c) => c.channel === "WHATSAPP").length})
-        </button>
-        <button
-          type="button"
           onClick={() => setTab("EMAIL")}
           className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold transition ${
             tab === "EMAIL"

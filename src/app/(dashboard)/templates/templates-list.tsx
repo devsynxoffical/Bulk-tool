@@ -89,17 +89,6 @@ export function TemplatesList({ templates }: { templates: TemplateItem[] }) {
         </button>
         <button
           type="button"
-          onClick={() => setTab("WHATSAPP")}
-          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold transition ${
-            tab === "WHATSAPP"
-              ? "border-emerald-600 text-emerald-600"
-              : "border-transparent text-zinc-500 hover:text-zinc-900"
-          }`}
-        >
-          <span>💬</span> WhatsApp ({templates.filter((t) => t.channel === "WHATSAPP").length})
-        </button>
-        <button
-          type="button"
           onClick={() => setTab("ALL")}
           className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold transition ${
             tab === "ALL"

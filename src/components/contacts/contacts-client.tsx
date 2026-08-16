@@ -177,23 +177,11 @@ export function ContactsClient({ initialContacts }: { initialContacts: Serialize
 
         <Card className="p-4 bg-white shadow-xs border-zinc-200">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
-              <MessageCircle className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-xs font-medium text-zinc-500">WhatsApp Reachable</p>
-              <p className="text-xl font-bold text-zinc-900">{whatsappCount}</p>
-            </div>
-          </div>
-        </Card>
-
-        <Card className="p-4 bg-white shadow-xs border-zinc-200">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-50 text-purple-600">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
               <Mail className="h-5 w-5" />
             </div>
             <div>
-              <p className="text-xs font-medium text-zinc-500">Email Reachable</p>
+              <p className="text-xs font-medium text-zinc-500">Email Outreach Reachable</p>
               <p className="text-xl font-bold text-zinc-900">{emailCount}</p>
             </div>
           </div>
@@ -281,10 +269,6 @@ export function ContactsClient({ initialContacts }: { initialContacts: Serialize
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" onClick={bulkSendWhatsApp} className="bg-[#00a884] hover:bg-[#008f70]">
-              <MessageCircle className="h-4 w-4" />
-              Send Bulk WhatsApp
-            </Button>
             <Button size="sm" onClick={bulkSendEmail} className="bg-blue-600 hover:bg-blue-700">
               <Mail className="h-4 w-4" />
               Send Bulk Email

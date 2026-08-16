@@ -135,23 +135,8 @@ export default function NewCampaignPage() {
           <CardContent className="space-y-4">
             <div className="space-y-1.5">
               <Label>Channel</Label>
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  variant={channel === "EMAIL" ? "default" : "outline"}
-                  onClick={() => switchChannel("EMAIL")}
-                  className="flex-1"
-                >
-                  Email
-                </Button>
-                <Button
-                  type="button"
-                  variant={channel === "WHATSAPP" ? "default" : "outline"}
-                  onClick={() => switchChannel("WHATSAPP")}
-                  className="flex-1"
-                >
-                  WhatsApp
-                </Button>
+              <div className="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50/50 p-2.5 text-xs text-blue-900 font-semibold">
+                <span>✉️ Email Cold Outreach Campaign (Multi-Inbox Rotation Enabled)</span>
               </div>
             </div>
 
