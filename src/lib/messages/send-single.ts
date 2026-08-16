@@ -161,6 +161,8 @@ export async function sendSingleEmail(params: {
   let subject = params.subject;
   let html = params.body;
 
+  let pdfUrl: string | undefined = undefined;
+
   if (params.templateId) {
     const template = await prisma.template.findUnique({
       where: { id: params.templateId },
@@ -170,6 +172,7 @@ export async function sendSingleEmail(params: {
     }
     subject = renderTemplateString(template.subject || subject, vars);
     html = renderTemplateString(template.body || html, vars);
+    pdfUrl = template.pdfUrl || undefined;
   }
 
   const result = await sendEmailMessage({
@@ -179,6 +182,7 @@ export async function sendSingleEmail(params: {
       ? html
       : `<p style="font-family:IBM Plex Sans,Arial,sans-serif;white-space:pre-wrap">${html}</p>`,
     text: html.replace(/<[^>]+>/g, " ").trim(),
+    pdfUrl,
   });
 
   const conv = await upsertConversation({

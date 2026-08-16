@@ -149,6 +149,7 @@ export async function processCampaignJob(job: Job<CampaignJobData>) {
         to: recipient.contact.email,
         subject,
         html,
+        pdfUrl: recipient.campaign.template.pdfUrl || undefined,
       });
       externalId = result.messageId;
     } else {

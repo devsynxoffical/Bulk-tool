@@ -8,20 +8,76 @@ export async function getActiveEmailAccount() {
   });
 }
 
+export type EmailAttachment = {
+  filename: string;
+  content?: string; // Base64 or string content
+  path?: string;    // URL or file path
+  contentType?: string;
+};
+
 export async function sendEmailMessage(params: {
   to: string;
   subject: string;
   html: string;
   text?: string;
+  pdfUrl?: string;
+  attachments?: EmailAttachment[];
 }) {
   const account = await getActiveEmailAccount();
   if (!account) {
     throw new Error("Email account not configured in Settings.");
   }
 
-  const acc = account as typeof account & { provider?: string; apiKey?: string };
+  const acc = account as typeof account & {
+    provider?: string;
+    apiKey?: string;
+    signature?: string | null;
+  };
   const provider = acc.provider?.toUpperCase() || (acc.apiKey ? "RESEND" : "SMTP");
 
+  // 1. Prepare HTML body with Email Signature if configured
+  let finalHtml = params.html;
+  if (acc.signature && acc.signature.trim() && !finalHtml.includes("email-signature-container")) {
+    finalHtml += `
+      <div class="email-signature-container" style="margin-top: 32px; pt-4; border-top: 1px solid #e2e8f0; font-family: sans-serif; color: #334155;">
+        ${acc.signature}
+      </div>
+    `;
+  }
+
+  // 2. Prepare Attachments (PDFs or files)
+  const preparedAttachments: Array<{ filename: string; content?: string; path?: string }> = [];
+
+  if (params.attachments && params.attachments.length > 0) {
+    preparedAttachments.push(...params.attachments);
+  }
+
+  if (params.pdfUrl && params.pdfUrl.trim()) {
+    try {
+      const cleanUrl = params.pdfUrl.trim();
+      const filename = cleanUrl.split("/").pop()?.split("?")[0] || "document.pdf";
+      const safeFilename = filename.toLowerCase().endsWith(".pdf") ? filename : `${filename}.pdf`;
+
+      if (cleanUrl.startsWith("http://") || cleanUrl.startsWith("https://")) {
+        const res = await fetch(cleanUrl);
+        if (res.ok) {
+          const buffer = Buffer.from(await res.arrayBuffer());
+          preparedAttachments.push({
+            filename: safeFilename,
+            content: buffer.toString("base64"),
+          });
+        } else {
+          preparedAttachments.push({ filename: safeFilename, path: cleanUrl });
+        }
+      } else {
+        preparedAttachments.push({ filename: safeFilename, path: cleanUrl });
+      }
+    } catch (e) {
+      console.warn("Failed to attach PDF from URL:", e);
+    }
+  }
+
+  // 3. Send via Resend API
   if (provider === "RESEND") {
     const apiKey = acc.apiKey || process.env.RESEND_API_KEY;
     if (!apiKey) {
@@ -32,19 +88,29 @@ export async function sendEmailMessage(params: {
       ? `${account.fromName} <${account.fromEmail}>`
       : account.fromEmail;
 
+    const resendBody: Record<string, unknown> = {
+      from: fromAddress,
+      to: [params.to],
+      subject: params.subject,
+      html: finalHtml,
+      text: params.text || finalHtml.replace(/<[^>]+>/g, " "),
+    };
+
+    if (preparedAttachments.length > 0) {
+      resendBody.attachments = preparedAttachments.map((att) => ({
+        filename: att.filename,
+        content: att.content || undefined,
+        path: att.path || undefined,
+      }));
+    }
+
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        from: fromAddress,
-        to: [params.to],
-        subject: params.subject,
-        html: params.html,
-        text: params.text || params.html.replace(/<[^>]+>/g, " "),
-      }),
+      body: JSON.stringify(resendBody),
     });
 
     const resData = await response.json();
@@ -57,7 +123,7 @@ export async function sendEmailMessage(params: {
     return { messageId: resData.id || `resend_${Date.now()}` };
   }
 
-  // SMTP fallback
+  // 4. Send via SMTP (Nodemailer)
   if (!account.host || !account.username || !account.password) {
     throw new Error("SMTP settings are incomplete. Please check Settings.");
   }
@@ -78,8 +144,9 @@ export async function sendEmailMessage(params: {
       : account.fromEmail,
     to: params.to,
     subject: params.subject,
-    html: params.html,
-    text: params.text || params.html.replace(/<[^>]+>/g, " "),
+    html: finalHtml,
+    text: params.text || finalHtml.replace(/<[^>]+>/g, " "),
+    attachments: preparedAttachments.length > 0 ? preparedAttachments : undefined,
   });
 
   return { messageId: info.messageId };

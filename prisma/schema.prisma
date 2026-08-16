@@ -99,6 +99,7 @@ model EmailAccount {
   password  String?
   fromEmail String
   fromName  String?
+  signature String?  @db.Text
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -152,6 +153,7 @@ model Template {
   body           String?
   header         String?
   footer         String?
+  pdfUrl         String?
   components     Json?
   isSample       Boolean    @default(false)
   createdAt      DateTime   @default(now())

@@ -12,6 +12,7 @@ const schema = z
     body: z.string().min(1),
     header: z.string().max(200).optional(),
     footer: z.string().max(200).optional(),
+    pdfUrl: z.string().url().or(z.literal("")).optional(),
   })
   .refine((d) => d.channel !== "EMAIL" || (d.subject && d.subject.length > 0), {
     message: "Email templates need a subject line",
@@ -50,6 +51,7 @@ export async function POST(req: NextRequest) {
       body: parsed.data.body,
       header: parsed.data.header ?? null,
       footer: parsed.data.footer ?? null,
+      pdfUrl: parsed.data.pdfUrl || null,
       isSample: false,
     },
   });

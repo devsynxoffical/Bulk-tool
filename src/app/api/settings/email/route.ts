@@ -13,6 +13,7 @@ const schema = z.object({
   password: z.string().optional(),
   fromEmail: z.string().email(),
   fromName: z.string().optional(),
+  signature: z.string().optional(),
 });
 
 export async function GET() {
@@ -36,6 +37,7 @@ export async function GET() {
     username: account.username || "",
     fromEmail: account.fromEmail,
     fromName: account.fromName,
+    signature: account.signature || "",
     isActive: account.isActive,
     hasPassword: Boolean(account.password),
   });
@@ -51,7 +53,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { provider, apiKey, password, ...rest } = parsed.data;
+  const { provider, apiKey, password, signature, ...rest } = parsed.data;
   const existing = await prisma.emailAccount.findFirst();
 
   if (provider === "RESEND" && !apiKey && !existing?.apiKey) {
@@ -64,17 +66,16 @@ export async function POST(req: NextRequest) {
   const updateData: Record<string, unknown> = {
     ...rest,
     provider,
+    signature: signature ?? "",
     isActive: true,
   };
 
-  // Only update apiKey if user provided a new one (not masked bullet string)
   if (apiKey && !apiKey.includes("••••")) {
     updateData.apiKey = apiKey;
   } else if (!existing && apiKey) {
     updateData.apiKey = apiKey;
   }
 
-  // Only update password if provided
   if (password) {
     updateData.password = password;
   }
@@ -103,6 +104,7 @@ export async function POST(req: NextRequest) {
     username: account.username || "",
     fromEmail: account.fromEmail,
     fromName: account.fromName,
+    signature: account.signature,
     isActive: account.isActive,
   });
 }

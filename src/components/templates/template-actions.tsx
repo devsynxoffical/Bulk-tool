@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { FilePlus2 } from "lucide-react";
+import { FilePlus2, Paperclip } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
 import {
@@ -21,6 +21,7 @@ export function TemplateActions() {
   const [category, setCategory] = useState("MARKETING");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
+  const [pdfUrl, setPdfUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -38,6 +39,7 @@ export function TemplateActions() {
         category,
         subject: subject || undefined,
         body,
+        pdfUrl: pdfUrl || undefined,
       }),
     });
     const data = await res.json();
@@ -52,6 +54,7 @@ export function TemplateActions() {
     setName("");
     setSubject("");
     setBody("");
+    setPdfUrl("");
     router.refresh();
   }
 
@@ -107,14 +110,28 @@ export function TemplateActions() {
               </div>
 
               {channel === "EMAIL" ? (
-                <div className="space-y-1.5">
-                  <Label>Subject</Label>
-                  <Input
-                    value={subject}
-                    onChange={(e) => setSubject(e.target.value)}
-                    placeholder="Hi {{name}}, special offer for you"
-                    required
-                  />
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label>Subject</Label>
+                    <Input
+                      value={subject}
+                      onChange={(e) => setSubject(e.target.value)}
+                      placeholder="Hi {{name}}, special offer for you"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="flex items-center gap-1">
+                      <Paperclip className="h-3.5 w-3.5 text-blue-600" />
+                      PDF Attachment URL (Optional)
+                    </Label>
+                    <Input
+                      type="url"
+                      value={pdfUrl}
+                      onChange={(e) => setPdfUrl(e.target.value)}
+                      placeholder="https://example.com/brochure.pdf"
+                    />
+                  </div>
                 </div>
               ) : null}
 
@@ -125,7 +142,7 @@ export function TemplateActions() {
                   onChange={(e) => setBody(e.target.value)}
                   placeholder={
                     channel === "EMAIL"
-                      ? "<p>Hi {{name}}, …</p>"
+                      ? "<p>Hi {{name}},</p><p>Please find attached our company catalog.</p>"
                       : "Hi {{1}}, enjoy our latest offer…"
                   }
                   required
