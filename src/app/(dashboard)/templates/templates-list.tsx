@@ -1,13 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { Eye, Paperclip } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Eye, Paperclip, Pencil, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/layout/page-header";
 import { TemplateActions } from "@/components/templates/template-actions";
 import { TemplatePreviewModal } from "@/components/templates/template-preview-modal";
+import { TemplateEditModal } from "@/components/templates/template-edit-modal";
 
 type TemplateItem = {
   id: string;
@@ -35,14 +37,41 @@ function channelTone(channel: string) {
 }
 
 export function TemplatesList({ templates }: { templates: TemplateItem[] }) {
+  const router = useRouter();
   const [tab, setTab] = useState<"ALL" | "WHATSAPP" | "EMAIL">("ALL");
   const [activePreviewTemplate, setActivePreviewTemplate] = useState<TemplateItem | null>(null);
+  const [activeEditingTemplate, setActiveEditingTemplate] = useState<TemplateItem | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const filtered = templates.filter((t) => {
     if (tab === "WHATSAPP") return t.channel === "WHATSAPP";
     if (tab === "EMAIL") return t.channel === "EMAIL";
     return true;
   });
+
+  async function handleDelete(t: TemplateItem) {
+    if (!confirm(`Are you sure you want to delete template "${t.name}"?`)) {
+      return;
+    }
+
+    setDeletingId(t.id);
+    try {
+      const res = await fetch(`/api/templates/${t.id}`, {
+        method: "DELETE",
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        alert(data.error || "Failed to delete template");
+      } else {
+        router.refresh();
+      }
+    } catch {
+      alert("Error deleting template");
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -91,25 +120,46 @@ export function TemplatesList({ templates }: { templates: TemplateItem[] }) {
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
           {filtered.map((t) => (
-            <Card key={t.id}>
-              <CardHeader className="flex-row items-start justify-between gap-3 space-y-0">
+            <Card key={t.id} className="relative group">
+              <CardHeader className="flex-row items-start justify-between gap-3 space-y-0 pb-3">
                 <div className="min-w-0">
-                  <CardTitle className="truncate font-mono text-xs">
+                  <CardTitle className="truncate font-mono text-xs text-zinc-900">
                     {t.name}
                   </CardTitle>
-                  <p className="mt-1 text-[11px] text-zinc-400">
+                  <p className="mt-1 text-[11px] text-zinc-500">
                     {t.language} · {t.category}
                     {t.subject ? ` · ${t.subject}` : ""}
                   </p>
                 </div>
-                <div className="flex shrink-0 flex-col items-end gap-1">
+                <div className="flex shrink-0 flex-col items-end gap-1.5">
                   <div className="flex gap-1">
                     <Badge tone={channelTone(t.channel)}>{t.channel}</Badge>
                     <Badge tone={statusTone(t.status)}>{t.status}</Badge>
                   </div>
-                  {t.isSample ? <Badge>Sample</Badge> : null}
+                  <div className="flex items-center gap-1 pt-1">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setActiveEditingTemplate(t)}
+                      className="h-7 w-7 p-0 text-zinc-500 hover:text-blue-600 hover:bg-blue-50"
+                      title="Edit template"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleDelete(t)}
+                      disabled={deletingId === t.id}
+                      className="h-7 w-7 p-0 text-zinc-500 hover:text-red-600 hover:bg-red-50"
+                      title="Delete template"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
+
               <CardContent className="space-y-3">
                 {t.header ? (
                   <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
@@ -129,7 +179,7 @@ export function TemplatesList({ templates }: { templates: TemplateItem[] }) {
                 )}
 
                 {t.pdfUrl ? (
-                  <div className="flex items-center gap-1.5 text-xs text-blue-600">
+                  <div className="flex items-center gap-1.5 text-xs text-blue-600 font-medium">
                     <Paperclip className="h-3.5 w-3.5" />
                     <span className="truncate">Attached PDF document</span>
                   </div>
@@ -140,15 +190,24 @@ export function TemplatesList({ templates }: { templates: TemplateItem[] }) {
                 ) : null}
 
                 {t.channel === "EMAIL" ? (
-                  <div className="pt-2">
+                  <div className="pt-2 flex gap-2">
                     <Button
                       size="sm"
                       variant="outline"
                       onClick={() => setActivePreviewTemplate(t)}
-                      className="w-full flex items-center justify-center gap-1.5 text-xs border-blue-200 text-blue-700 hover:bg-blue-50"
+                      className="flex-1 flex items-center justify-center gap-1.5 text-xs border-blue-200 text-blue-700 hover:bg-blue-50"
                     >
                       <Eye className="h-3.5 w-3.5" />
-                      Preview Email Design (Desktop & Mobile)
+                      Preview Design (Desktop & Mobile)
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setActiveEditingTemplate(t)}
+                      className="flex items-center justify-center gap-1.5 text-xs"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                      Edit
                     </Button>
                   </div>
                 ) : null}
@@ -171,6 +230,15 @@ export function TemplatesList({ templates }: { templates: TemplateItem[] }) {
             footer: activePreviewTemplate.footer,
             pdfUrl: activePreviewTemplate.pdfUrl,
           }}
+        />
+      ) : null}
+
+      {/* Edit Template Modal */}
+      {activeEditingTemplate ? (
+        <TemplateEditModal
+          open={Boolean(activeEditingTemplate)}
+          onClose={() => setActiveEditingTemplate(null)}
+          template={activeEditingTemplate}
         />
       ) : null}
     </div>
