@@ -90,11 +90,13 @@ model WhatsAppSession {
 
 model EmailAccount {
   id        String   @id @default(cuid())
-  host      String
-  port      Int      @default(587)
-  secure    Boolean  @default(false)
-  username  String
-  password  String
+  provider  String   @default("RESEND")
+  apiKey    String?
+  host      String?
+  port      Int?     @default(587)
+  secure    Boolean? @default(false)
+  username  String?
+  password  String?
   fromEmail String
   fromName  String?
   isActive  Boolean  @default(true)

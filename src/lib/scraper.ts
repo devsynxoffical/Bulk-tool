@@ -78,3 +78,8 @@ export async function startScrape(params: {
 export async function getScrapeJob(jobId: string): Promise<ScrapeJob> {
   return proxy(`/api/jobs/${jobId}`);
 }
+
+export async function getActiveScrapeJob(): Promise<{ active: boolean; job: ScrapeJob | null }> {
+  return proxy<{ active: boolean; job: ScrapeJob | null }>("/api/jobs/active");
+}
+

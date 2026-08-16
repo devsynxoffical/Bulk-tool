@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 
 type ConversationListItem = {
   id: string;
-  channel: "WHATSAPP";
+  channel: "WHATSAPP" | "EMAIL";
   lastMessageAt: string;
   lastMessagePreview: string | null;
   unreadCount: number;
@@ -99,6 +99,7 @@ export function InboxClient({
   const presetId = searchParams.get("c");
 
   const [conversations, setConversations] = useState(initialConversations);
+  const [channelFilter, setChannelFilter] = useState<"ALL" | "WHATSAPP" | "EMAIL">("ALL");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(
     presetId || initialConversations[0]?.id || null,
@@ -113,14 +114,17 @@ export function InboxClient({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return conversations.filter((c) => {
+      if (channelFilter === "WHATSAPP" && c.channel !== "WHATSAPP") return false;
+      if (channelFilter === "EMAIL" && c.channel !== "EMAIL") return false;
       if (!q) return true;
       return (
         (c.contact.name || "").toLowerCase().includes(q) ||
         (c.contact.phone || "").includes(q) ||
+        (c.contact.email || "").toLowerCase().includes(q) ||
         (c.lastMessagePreview || "").toLowerCase().includes(q)
       );
     });
-  }, [conversations, query]);
+  }, [conversations, query, channelFilter]);
 
   useEffect(() => {
     let cancelled = false;
@@ -255,7 +259,7 @@ export function InboxClient({
           </Link>
         </div>
 
-        <div className="bg-[#111b21] px-3 py-2">
+        <div className="bg-[#111b21] px-3 py-2 space-y-2">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#8696a0]" />
             <input
@@ -264,6 +268,44 @@ export function InboxClient({
               placeholder="Search or start a new chat"
               className="h-9 w-full rounded-lg border-0 bg-[#202c33] pl-9 pr-3 text-sm text-[#e9edef] placeholder:text-[#8696a0] outline-none focus:ring-1 focus:ring-[#00a884]/40"
             />
+          </div>
+          <div className="flex gap-1">
+            <button
+              type="button"
+              onClick={() => setChannelFilter("ALL")}
+              className={cn(
+                "rounded-full px-3 py-1 text-xs font-medium transition cursor-pointer",
+                channelFilter === "ALL"
+                  ? "bg-[#00a884] text-[#111b21]"
+                  : "bg-[#202c33] text-[#8696a0] hover:text-[#e9edef]",
+              )}
+            >
+              All
+            </button>
+            <button
+              type="button"
+              onClick={() => setChannelFilter("WHATSAPP")}
+              className={cn(
+                "rounded-full px-3 py-1 text-xs font-medium transition cursor-pointer",
+                channelFilter === "WHATSAPP"
+                  ? "bg-[#00a884] text-[#111b21]"
+                  : "bg-[#202c33] text-[#8696a0] hover:text-[#e9edef]",
+              )}
+            >
+              💬 WhatsApp
+            </button>
+            <button
+              type="button"
+              onClick={() => setChannelFilter("EMAIL")}
+              className={cn(
+                "rounded-full px-3 py-1 text-xs font-medium transition cursor-pointer",
+                channelFilter === "EMAIL"
+                  ? "bg-[#3b82f6] text-white"
+                  : "bg-[#202c33] text-[#8696a0] hover:text-[#e9edef]",
+              )}
+            >
+              ✉️ Email
+            </button>
           </div>
         </div>
 
@@ -301,15 +343,16 @@ export function InboxClient({
                   >
                     {initials(c.contact.name, c.contact.phone)}
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="truncate text-[15px] font-medium text-[#e9edef]">
-                        {name}
-                      </p>
-                      <span className="shrink-0 text-[11px] text-[#8696a0]">
-                        {formatListTime(c.lastMessageAt)}
-                      </span>
-                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="truncate text-[15px] font-medium text-[#e9edef] flex items-center gap-1.5">
+                          <span>{c.channel === "EMAIL" ? "✉️" : "💬"}</span>
+                          <span>{name}</span>
+                        </p>
+                        <span className="shrink-0 text-[11px] text-[#8696a0]">
+                          {formatListTime(c.lastMessageAt)}
+                        </span>
+                      </div>
                     <div className="mt-0.5 flex items-center justify-between gap-2">
                       <p className="truncate text-[13px] text-[#8696a0]">
                         {c.lastMessagePreview || "No messages yet"}

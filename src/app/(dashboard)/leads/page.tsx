@@ -53,14 +53,44 @@ export default function LeadFinderPage() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/scraper/health")
-      .then((r) => r.json())
-      .then((data: { ok: boolean }) => {
-        if (!cancelled) setOffline(!data.ok);
-      })
-      .catch(() => {
+    async function restoreSession() {
+      try {
+        const healthRes = await fetch("/api/scraper/health");
+        const healthData = await healthRes.json();
+        if (cancelled) return;
+        setOffline(!healthData.ok);
+        if (!healthData.ok) return;
+
+        // Try fetching active or latest job from backend
+        const activeRes = await fetch("/api/scraper/jobs/active");
+        if (activeRes.ok) {
+          const data = (await activeRes.json()) as { active: boolean; job: ScrapeJob | null };
+          if (data.job && !cancelled) {
+            setJob(data.job);
+            setJobId(data.job.id);
+            if (data.job.query) setQuery(data.job.query);
+            localStorage.setItem("active_scrape_job_id", data.job.id);
+            return;
+          }
+        }
+
+        // Fallback to local storage saved job id if backend has no active job
+        const savedId = localStorage.getItem("active_scrape_job_id");
+        if (savedId && !cancelled) {
+          const res = await fetch(`/api/scraper/jobs/${savedId}`);
+          if (res.ok) {
+            const data = (await res.json()) as ScrapeJob;
+            setJob(data);
+            setJobId(data.id);
+            if (data.query) setQuery(data.query);
+          }
+        }
+      } catch {
         if (!cancelled) setOffline(true);
-      });
+      }
+    }
+
+    restoreSession();
     return () => {
       cancelled = true;
     };
@@ -109,6 +139,7 @@ export default function LeadFinderPage() {
       }
       setOffline(false);
       setJobId(data.jobId);
+      localStorage.setItem("active_scrape_job_id", data.jobId);
       const first = await fetch(`/api/scraper/jobs/${data.jobId}`);
       setJob((await first.json()) as ScrapeJob);
     } catch {
@@ -224,6 +255,25 @@ export default function LeadFinderPage() {
           </CardContent>
         </Card>
       </form>
+
+      {running ? (
+        <Card className="mt-4 border-blue-200 bg-blue-50/70">
+          <CardContent className="flex items-center justify-between gap-3 py-3 text-sm text-blue-900">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-3 w-3">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75"></span>
+                <span className="relative inline-flex h-3 w-3 rounded-full bg-blue-500"></span>
+              </span>
+              <span>
+                Scraping session active for <strong>&quot;{job?.query}&quot;</strong>. You can navigate freely — progress is saved automatically!
+              </span>
+            </div>
+            <span className="text-xs text-blue-700 font-medium">
+              {job?.stats.found || 0} leads found
+            </span>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {error ? (
         <Card className="mt-4 border-red-200 bg-red-50/60">

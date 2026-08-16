@@ -185,6 +185,16 @@ class Handler(BaseHTTPRequestHandler):
             _send_json(self, {"error": "Not found"}, 404)
             return
         job_id = parts[3]
+        if job_id == "active":
+            with LOCK:
+                running_jobs = [j for j in JOBS.values() if j["status"] == "running"]
+                job = running_jobs[0] if running_jobs else (list(JOBS.values())[-1] if JOBS else None)
+            if not job:
+                _send_json(self, {"active": False, "job": None})
+                return
+            _send_json(self, {"active": job["status"] == "running", "job": _job_summary(job)})
+            return
+
         job = JOBS.get(job_id)
         if not job:
             _send_json(self, {"error": "Job not found"}, 404)

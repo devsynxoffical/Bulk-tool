@@ -4,7 +4,6 @@ import { InboxClient } from "@/components/inbox/inbox-client";
 
 export default async function InboxPage() {
   const conversations = await prisma.conversation.findMany({
-    where: { channel: "WHATSAPP" },
     orderBy: { lastMessageAt: "desc" },
     include: { contact: true },
     take: 100,
@@ -12,7 +11,7 @@ export default async function InboxPage() {
 
   const serializable = conversations.map((c) => ({
     id: c.id,
-    channel: "WHATSAPP" as const,
+    channel: c.channel as "WHATSAPP" | "EMAIL",
     lastMessageAt: c.lastMessageAt.toISOString(),
     lastMessagePreview: c.lastMessagePreview,
     unreadCount: c.unreadCount,

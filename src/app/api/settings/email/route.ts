@@ -4,11 +4,13 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/api";
 
 const schema = z.object({
-  host: z.string().min(1),
-  port: z.number().int().min(1).max(65535),
-  secure: z.boolean(),
-  username: z.string().min(1),
-  password: z.string().min(1).optional(),
+  provider: z.enum(["RESEND", "SMTP"]).default("RESEND"),
+  apiKey: z.string().optional(),
+  host: z.string().optional(),
+  port: z.number().int().min(1).max(65535).optional(),
+  secure: z.boolean().optional(),
+  username: z.string().optional(),
+  password: z.string().optional(),
   fromEmail: z.string().email(),
   fromName: z.string().optional(),
 });
@@ -25,10 +27,13 @@ export async function GET() {
 
   return NextResponse.json({
     id: account.id,
-    host: account.host,
-    port: account.port,
-    secure: account.secure,
-    username: account.username,
+    provider: account.provider || "RESEND",
+    apiKey: account.apiKey ? "••••••••" : "",
+    hasApiKey: Boolean(account.apiKey),
+    host: account.host || "",
+    port: account.port || 587,
+    secure: Boolean(account.secure),
+    username: account.username || "",
     fromEmail: account.fromEmail,
     fromName: account.fromName,
     isActive: account.isActive,
@@ -40,32 +45,62 @@ export async function POST(req: NextRequest) {
   const { error } = await requireSession();
   if (error) return error;
 
-  const parsed = schema.safeParse(await req.json());
+  const body = await req.json();
+  const parsed = schema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { password, ...rest } = parsed.data;
+  const { provider, apiKey, password, ...rest } = parsed.data;
   const existing = await prisma.emailAccount.findFirst();
+
+  if (provider === "RESEND" && !apiKey && !existing?.apiKey) {
+    return NextResponse.json(
+      { error: "Please enter a valid Resend API key (e.g. re_123456...)" },
+      { status: 400 },
+    );
+  }
+
+  const updateData: Record<string, unknown> = {
+    ...rest,
+    provider,
+    isActive: true,
+  };
+
+  // Only update apiKey if user provided a new one (not masked bullet string)
+  if (apiKey && !apiKey.includes("••••")) {
+    updateData.apiKey = apiKey;
+  } else if (!existing && apiKey) {
+    updateData.apiKey = apiKey;
+  }
+
+  // Only update password if provided
+  if (password) {
+    updateData.password = password;
+  }
 
   const account = existing
     ? await prisma.emailAccount.update({
         where: { id: existing.id },
-        data:
-          password !== undefined
-            ? { ...rest, password, isActive: true }
-            : { ...rest, isActive: true },
+        data: updateData,
       })
     : await prisma.emailAccount.create({
-        data: { ...rest, password: password ?? "", isActive: true },
+        data: {
+          ...updateData,
+          fromEmail: rest.fromEmail,
+          password: password ?? "",
+        } as any,
       });
 
   return NextResponse.json({
     id: account.id,
-    host: account.host,
-    port: account.port,
-    secure: account.secure,
-    username: account.username,
+    provider: account.provider,
+    apiKey: account.apiKey ? "••••••••" : "",
+    hasApiKey: Boolean(account.apiKey),
+    host: account.host || "",
+    port: account.port || 587,
+    secure: Boolean(account.secure),
+    username: account.username || "",
     fromEmail: account.fromEmail,
     fromName: account.fromName,
     isActive: account.isActive,
