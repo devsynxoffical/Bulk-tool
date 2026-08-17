@@ -83,6 +83,8 @@ export default function LeadFinderPage() {
             setJob(data);
             setJobId(data.id);
             if (data.query) setQuery(data.query);
+          } else {
+            localStorage.removeItem("active_scrape_job_id");
           }
         }
       } catch {

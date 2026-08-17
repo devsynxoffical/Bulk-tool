@@ -89,20 +89,24 @@ export function EmailForm() {
 
   function loadData() {
     fetch("/api/settings/email")
-      .then((r) => r.json())
+      .then((r) => (r.ok ? r.json() : { accounts: [] }))
       .then((data: { accounts: EmailAccount[] }) => {
-        if (data.accounts && data.accounts.length > 0) {
+        if (data && Array.isArray(data.accounts)) {
           setAccounts(data.accounts);
-          const first = data.accounts[0];
-          setSignature(first.signature || "");
+          if (data.accounts.length > 0) {
+            const first = data.accounts[0];
+            setSignature(first.signature || "");
+          }
         }
-      });
+      })
+      .catch((err) => console.error("Error loading email accounts:", err));
 
     fetch("/api/domains")
-      .then((r) => r.json())
+      .then((r) => (r.ok ? r.json() : { domains: [] }))
       .then((data: { domains: DomainRecord[] }) => {
-        if (data.domains) setDomains(data.domains);
-      });
+        if (data && Array.isArray(data.domains)) setDomains(data.domains);
+      })
+      .catch((err) => console.error("Error loading domains:", err));
   }
 
   function copyToClipboard(text: string, key: string) {
