@@ -5,29 +5,33 @@ import { requireSession } from "@/lib/api";
 import { sendEmailMessage } from "@/lib/email/client";
 
 const schema = z.object({
-  to: z.string().email().optional(),
+  to: z.string().email().optional().or(z.literal("")),
 });
 
 export async function POST(req: NextRequest) {
   const { error } = await requireSession();
   if (error) return error;
 
-  const parsed = schema.safeParse(await req.json());
-  if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid test email" }, { status: 400 });
-  }
-
-  const account = await prisma.emailAccount.findFirst({
-    where: { isActive: true },
-    orderBy: { updatedAt: "desc" },
-  });
-  if (!account) {
-    return NextResponse.json({ error: "No active email account configured" }, { status: 400 });
-  }
-
-  const target = parsed.data.to || account.fromEmail;
-
   try {
+    const body = await req.json().catch(() => ({}));
+    const parsed = schema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json({ error: "Please enter a valid recipient email address" }, { status: 400 });
+    }
+
+    const account = await prisma.emailAccount.findFirst({
+      where: { isActive: true },
+      orderBy: { updatedAt: "desc" },
+    });
+    if (!account) {
+      return NextResponse.json(
+        { error: "No active sending mailbox connected. Please add your SMTP server under Connected Inboxes first." },
+        { status: 400 },
+      );
+    }
+
+    const target = parsed.data.to?.trim() || account.fromEmail;
+
     const result = await sendEmailMessage({
       to: target,
       subject: "Test Email from DEVSYNX Email Suite",
@@ -38,6 +42,7 @@ export async function POST(req: NextRequest) {
           <p style="color: #64748b; font-size: 13px;">Mailbox Provider: <strong>${account.provider}</strong> | Sender: <strong>${account.fromEmail}</strong></p>
         </div>
       `,
+      account: account,
     });
 
     return NextResponse.json({ success: true, sentTo: target, messageId: result.messageId });
