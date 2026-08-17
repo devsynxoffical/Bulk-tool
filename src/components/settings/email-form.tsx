@@ -645,11 +645,11 @@ export function EmailForm() {
                           className={`flex items-center justify-between p-3 rounded-lg border ${
                             d.mxVerified
                               ? "bg-emerald-50/80 border-emerald-200 text-emerald-900"
-                              : "bg-rose-50/80 border-rose-200 text-rose-900"
+                              : "bg-amber-50/80 border-amber-200 text-amber-900"
                           }`}
                         >
-                          <span><strong>MX Record</strong></span>
-                          <span>{d.mxVerified ? "✅ Verified" : "❌ No MX"}</span>
+                          <span><strong>MX (Inbound Replies)</strong></span>
+                          <span>{d.mxVerified ? "✅ Active Host" : "⚠️ Optional"}</span>
                         </div>
                       </div>
 
