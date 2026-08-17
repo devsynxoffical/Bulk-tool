@@ -17,6 +17,9 @@ function contactVars(contact: {
     name: contact.name || "",
     phone: contact.phone || "",
     email: contact.email || "",
+    company: custom.company || custom.Company || "",
+    city: custom.city || custom.City || "",
+    location: custom.location || custom.city || "",
     ...custom,
   };
 }
@@ -75,6 +78,9 @@ export async function sendSingleEmail(params: {
     subject = renderTemplateString(template.subject || subject, vars);
     html = renderTemplateString(template.body || html, vars);
     pdfUrl = template.pdfUrl || undefined;
+  } else {
+    subject = renderTemplateString(subject, vars);
+    html = renderTemplateString(html, vars);
   }
 
   const conv = await upsertConversation({

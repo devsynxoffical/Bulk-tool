@@ -9,7 +9,10 @@ const createSchema = z
     phone: z.string().optional(),
     name: z.string().optional(),
     email: z.string().email().optional().or(z.literal("")),
+    company: z.string().optional(),
+    city: z.string().optional(),
     tags: z.array(z.string()).optional(),
+    customFields: z.record(z.string(), z.string()).optional(),
   })
   .refine((d) => Boolean(d.phone?.trim() || d.email?.trim()), {
     message: "Phone or email is required",
@@ -66,6 +69,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid phone number" }, { status: 400 });
   }
 
+  const customFields: Record<string, string> = {
+    ...(parsed.data.customFields || {}),
+  };
+  if (parsed.data.company?.trim()) customFields.company = parsed.data.company.trim();
+  if (parsed.data.city?.trim()) customFields.city = parsed.data.city.trim();
+
   if (phone) {
     const contact = await prisma.contact.upsert({
       where: { phone },
@@ -73,15 +82,17 @@ export async function POST(req: NextRequest) {
         name: parsed.data.name || undefined,
         email: email || undefined,
         tags: parsed.data.tags || undefined,
+        customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
       },
       create: {
         phone,
         name: parsed.data.name || null,
         email,
         tags: parsed.data.tags || [],
+        customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
       },
     });
-    return NextResponse.json(contact, { status: 201 });
+    return NextResponse.json({ contact }, { status: 201 });
   }
 
   const contact = await prisma.contact.upsert({
@@ -89,15 +100,17 @@ export async function POST(req: NextRequest) {
     update: {
       name: parsed.data.name || undefined,
       tags: parsed.data.tags || undefined,
+      customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
     },
     create: {
       email: email!,
       name: parsed.data.name || null,
       tags: parsed.data.tags || [],
+      customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
     },
   });
 
-  return NextResponse.json(contact, { status: 201 });
+  return NextResponse.json({ contact }, { status: 201 });
 }
 
 export async function DELETE(req: NextRequest) {
