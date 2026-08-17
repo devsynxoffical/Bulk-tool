@@ -529,6 +529,19 @@ export function EmailForm() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="rounded-lg border border-blue-200 bg-blue-50/70 p-3.5 text-xs text-blue-950 space-y-1">
+                <p className="font-semibold text-sm flex items-center gap-1.5">
+                  <ShieldCheck className="h-4 w-4 text-blue-600" />
+                  Sending Domain &amp; Resend Integration:
+                </p>
+                <p>
+                  &bull; <strong>Using Resend API?</strong> Simply connect your Resend API Key under the <em>Connected Inboxes</em> tab. Resend automatically authenticates your domain sending permissions via your Resend account.
+                </p>
+                <p>
+                  &bull; <strong>Using Custom In-House SMTP?</strong> Enter your domain below to audit your live DNS records (SPF, DMARC, MX) and generate custom 2048-bit RSA DKIM keys for direct SMTP email signing.
+                </p>
+              </div>
+
               <form onSubmit={addAndAuditDomain} className="flex gap-2">
                 <Input
                   placeholder="e.g. mycompany.com"

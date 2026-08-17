@@ -3,7 +3,7 @@ import dns from "dns";
 export interface DnsCheckResult {
   domain: string;
   spf: { verified: boolean; record: string | null };
-  dkim: { verified: boolean; record: string | null };
+  dkim: { verified: boolean; record: string | null; selectorFound: string | null };
   dmarc: { verified: boolean; record: string | null };
   mx: { verified: boolean; records: string[] };
   isFullyConfigured: boolean;
@@ -17,6 +17,7 @@ export async function verifyDomainDns(
 
   let spfRecord: string | null = null;
   let dkimRecord: string | null = null;
+  let dkimSelectorFound: string | null = null;
   let dmarcRecord: string | null = null;
   let mxHostList: string[] = [];
 
@@ -40,8 +41,8 @@ export async function verifyDomainDns(
     // ignore
   }
 
-  // 3. Resolve DKIM record (checks customSelector, then fallbacks)
-  const selectors = Array.from(new Set([customSelector, "dkim", "default", "google", "resend", "k1", "s1"]));
+  // 3. Resolve DKIM record (checks customSelector, then resend, google, etc.)
+  const selectors = Array.from(new Set([customSelector, "resend", "dkim", "google", "default", "k1", "s1"]));
   for (const selector of selectors) {
     try {
       const dkimTxt = await dns.promises.resolveTxt(`${selector}._domainkey.${domain}`);
@@ -49,6 +50,7 @@ export async function verifyDomainDns(
       const dkim = flatDkim.find((r) => r.includes("v=DKIM1") || r.includes("k=rsa") || r.includes("p="));
       if (dkim) {
         dkimRecord = dkim;
+        dkimSelectorFound = selector;
         break;
       }
     } catch {
@@ -72,7 +74,7 @@ export async function verifyDomainDns(
   return {
     domain,
     spf: { verified: spfVerified, record: spfRecord },
-    dkim: { verified: dkimVerified, record: dkimRecord },
+    dkim: { verified: dkimVerified, record: dkimRecord, selectorFound: dkimSelectorFound },
     dmarc: { verified: dmarcVerified, record: dmarcRecord },
     mx: { verified: mxVerified, records: mxHostList },
     isFullyConfigured: spfVerified && dkimVerified && dmarcVerified && mxVerified,
