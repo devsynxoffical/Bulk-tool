@@ -512,14 +512,25 @@ export function EmailForm() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="rounded-lg border border-blue-200 bg-blue-50/70 p-3.5 text-xs text-blue-950 space-y-1">
-                <p className="font-semibold text-sm flex items-center gap-1.5">
+              <div className="rounded-lg border border-blue-200 bg-blue-50/70 p-4 text-xs text-blue-950 space-y-2">
+                <p className="font-semibold text-sm flex items-center gap-1.5 text-blue-900">
                   <ShieldCheck className="h-4 w-4 text-blue-600" />
-                  In-House Cryptographic Domain Authentication (No Third Parties):
+                  In-House Cryptographic Domain Authentication (cPanel / Cloudflare Guide):
                 </p>
                 <p>
-                  Enter your sending domain below to generate unique <strong>2048-bit RSA DKIM Keys</strong> (`dkim._domainkey`), <strong>SPF</strong> (`v=spf1 ...`), and <strong>DMARC</strong> records. Copy these TXT records to your DNS provider (Cloudflare, Namecheap, GoDaddy) to authenticate your domain for direct email sending.
+                  Enter your root domain below (e.g. <code>devsynx.com</code>, <strong>not</strong> <code>www.devsynx.com</code>) to generate unique <strong>2048-bit RSA DKIM Keys</strong> (`dkim._domainkey`), <strong>SPF</strong> (`v=spf1 ...`), and <strong>DMARC</strong> records.
                 </p>
+                <div className="rounded bg-amber-50 border border-amber-200 p-2.5 text-amber-950 font-medium space-y-1">
+                  <p className="font-bold text-amber-900">⚠️ Important for cPanel Zone Editor Users:</p>
+                  <p>
+                    Do <strong>NOT</strong> enter <code>www.devsynx.com</code> in cPanel! In DNS rules, <code>www</code> has a <code>CNAME</code> record, so cPanel will show an error <em>"CNAME and other data"</em> if you add a TXT record to <code>www</code>.
+                  </p>
+                  <p>
+                    &bull; For <strong>SPF</strong>: Set Name to <code>@</code> (or <code>devsynx.com</code>)<br/>
+                    &bull; For <strong>DMARC</strong>: Set Name to <code>_dmarc</code><br/>
+                    &bull; For <strong>DKIM</strong>: Set Name to <code>dkim._domainkey</code>
+                  </p>
+                </div>
               </div>
 
               <form onSubmit={addAndAuditDomain} className="flex gap-2">

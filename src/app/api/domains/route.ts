@@ -82,7 +82,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid domain name" }, { status: 400 });
     }
 
-    const domainName = parsed.data.domainName.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+    const domainName = parsed.data.domainName
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, "")
+      .replace(/^www\./, "")
+      .replace(/\/.*$/, "");
     const selector = "dkim";
 
     let domainRecord = await prisma.sendingDomain.findUnique({
