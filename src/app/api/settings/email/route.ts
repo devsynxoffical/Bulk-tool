@@ -5,14 +5,13 @@ import { requireSession } from "@/lib/api";
 
 const schema = z.object({
   id: z.string().optional(),
-  provider: z.enum(["RESEND", "SMTP"]).default("SMTP"),
-  apiKey: z.string().optional(),
-  host: z.string().optional(),
-  port: z.number().int().min(1).max(65535).optional(),
-  secure: z.boolean().optional(),
-  username: z.string().optional(),
+  provider: z.string().default("SMTP"),
+  host: z.string().min(1, "SMTP host is required"),
+  port: z.number().int().min(1).max(65535).default(587),
+  secure: z.boolean().optional().default(false),
+  username: z.string().min(1, "SMTP username is required"),
   password: z.string().optional(),
-  fromEmail: z.string().email(),
+  fromEmail: z.string().email("Valid sender email is required"),
   fromName: z.string().optional(),
   signature: z.string().optional(),
   dailyLimit: z.number().int().min(5).max(5000).optional().default(50),
@@ -31,9 +30,7 @@ export async function GET() {
 
     const formatted = accounts.map((acc) => ({
       id: acc.id,
-      provider: acc.provider || "SMTP",
-      apiKey: acc.apiKey ? "••••••••" : "",
-      hasApiKey: Boolean(acc.apiKey),
+      provider: "SMTP",
       host: acc.host || "",
       port: acc.port || 587,
       secure: Boolean(acc.secure),
@@ -70,19 +67,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
     }
 
-    const { id, provider, apiKey, password, signature, dailyLimit, isActive, ...rest } = parsed.data;
+    const { id, password, signature, dailyLimit, isActive, ...rest } = parsed.data;
 
     const updateData: Record<string, unknown> = {
       ...rest,
-      provider,
+      provider: "SMTP",
       signature: signature ?? "",
       dailyLimit: dailyLimit ?? 50,
       isActive: isActive ?? true,
     };
-
-    if (apiKey && !apiKey.includes("••••")) {
-      updateData.apiKey = apiKey;
-    }
 
     if (password) {
       updateData.password = password;

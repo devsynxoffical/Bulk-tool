@@ -125,55 +125,10 @@ export async function sendEmailMessage(params: {
 
   let resultMessageId = `msg_${Date.now()}`;
 
-  // 4. Send via Resend API
-  if (provider === "RESEND") {
-    const apiKey = acc.apiKey || process.env.RESEND_API_KEY;
-    if (!apiKey) {
-      throw new Error("Resend API key is missing. Please set your Resend API Key in Settings.");
-    }
-
-    const fromAddress = account.fromName
-      ? `${account.fromName} <${account.fromEmail}>`
-      : account.fromEmail;
-
-    const resendBody: Record<string, unknown> = {
-      from: fromAddress,
-      to: [recipient],
-      subject: params.subject,
-      html: finalHtml,
-      text: params.text || finalHtml.replace(/<[^>]+>/g, " "),
-      headers: {
-        "List-Unsubscribe": `<${unsubUrl}>`,
-      },
-    };
-
-    if (preparedAttachments.length > 0) {
-      resendBody.attachments = preparedAttachments.map((att) => ({
-        filename: att.filename,
-        content: att.content || undefined,
-        path: att.path || undefined,
-      }));
-    }
-
-    const response = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(resendBody),
-    });
-
-    const resData = await response.json();
-    if (!response.ok) {
-      throw new Error(
-        resData?.message || resData?.name || resData?.error || `Resend API error (${response.status})`,
-      );
-    }
-
-    resultMessageId = resData.id || resultMessageId;
-  } else {
-    // 5. Send via SMTP (Nodemailer)
+  // 4. Send via In-House Direct SMTP Engine with 2048-bit RSA DKIM Signing
+  if (!account.host || !account.username || !account.password) {
+    throw new Error("SMTP server settings (Host, Username, Password) are incomplete. Please check Settings.");
+  }
     // Check if domain has cryptographic DKIM key pair configured
     const senderDomainName = account.fromEmail.split("@").pop()?.toLowerCase();
     let dkimConfig: { domainName: string; keySelector: string; privateKey: string } | undefined = undefined;
@@ -217,7 +172,6 @@ export async function sendEmailMessage(params: {
     });
 
     resultMessageId = info.messageId || resultMessageId;
-  }
 
   // Update sending statistics on the account
   try {

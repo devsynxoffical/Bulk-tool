@@ -41,8 +41,8 @@ export async function verifyDomainDns(
     // ignore
   }
 
-  // 3. Resolve DKIM record (checks customSelector, then resend, google, etc.)
-  const selectors = Array.from(new Set([customSelector, "resend", "dkim", "google", "default", "k1", "s1"]));
+  // 3. Resolve In-House DKIM record (checks customSelector dkim._domainkey.domain.com)
+  const selectors = Array.from(new Set([customSelector, "dkim", "default"]));
   for (const selector of selectors) {
     try {
       const dkimTxt = await dns.promises.resolveTxt(`${selector}._domainkey.${domain}`);

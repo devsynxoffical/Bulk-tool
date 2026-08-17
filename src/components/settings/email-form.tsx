@@ -380,81 +380,49 @@ export function EmailForm() {
               <CardTitle className="text-base font-semibold">
                 {editingId ? "Edit Mailbox Account" : "Connect New Sending Mailbox"}
               </CardTitle>
-              <CardDescription>Support Gmail, Outlook, Resend, or custom SMTP servers</CardDescription>
+              <CardDescription>Support Gmail, Outlook, cPanel, or custom SMTP servers</CardDescription>
             </CardHeader>
             <CardContent>
               <form onSubmit={saveInbox} className="space-y-4">
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    variant={provider === "SMTP" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setProvider("SMTP")}
-                  >
-                    <Server className="h-3.5 w-3.5 mr-1" /> Custom SMTP Server
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={provider === "RESEND" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setProvider("RESEND")}
-                  >
-                    <ShieldCheck className="h-3.5 w-3.5 mr-1" /> Resend API
-                  </Button>
-                </div>
-
-                {provider === "SMTP" ? (
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <Label>SMTP Host</Label>
-                      <Input
-                        value={host}
-                        onChange={(e) => setHost(e.target.value)}
-                        placeholder="smtp.gmail.com or smtp.office365.com"
-                        required
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Port</Label>
-                      <Input
-                        type="number"
-                        value={port}
-                        onChange={(e) => setPort(Number(e.target.value))}
-                        placeholder="587"
-                        required
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Username / Mailbox Email</Label>
-                      <Input
-                        value={username}
-                        onChange={(e) => setUsername(e.target.value)}
-                        placeholder="you@domain.com"
-                        required
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Password / App Password</Label>
-                      <Input
-                        type="password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        placeholder="••••••••••••"
-                      />
-                    </div>
-                  </div>
-                ) : (
+                <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-1.5">
-                    <Label>Resend API Key</Label>
+                    <Label>SMTP Host</Label>
                     <Input
-                      type="password"
-                      value={apiKey}
-                      onChange={(e) => setApiKey(e.target.value)}
-                      placeholder="re_123456789..."
+                      value={host}
+                      onChange={(e) => setHost(e.target.value)}
+                      placeholder="smtp.gmail.com or smtp.office365.com"
                       required
                     />
                   </div>
-                )}
+                  <div className="space-y-1.5">
+                    <Label>Port</Label>
+                    <Input
+                      type="number"
+                      value={port}
+                      onChange={(e) => setPort(Number(e.target.value))}
+                      placeholder="587"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Username / Mailbox Email</Label>
+                    <Input
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      placeholder="you@domain.com"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Password / App Password</Label>
+                    <Input
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••••••"
+                    />
+                  </div>
+                </div>
 
                 <div className="grid gap-4 sm:grid-cols-3">
                   <div className="space-y-1.5">
@@ -532,13 +500,10 @@ export function EmailForm() {
               <div className="rounded-lg border border-blue-200 bg-blue-50/70 p-3.5 text-xs text-blue-950 space-y-1">
                 <p className="font-semibold text-sm flex items-center gap-1.5">
                   <ShieldCheck className="h-4 w-4 text-blue-600" />
-                  Sending Domain &amp; Resend Integration:
+                  In-House Cryptographic Domain Authentication (No Third Parties):
                 </p>
                 <p>
-                  &bull; <strong>Using Resend API?</strong> Simply connect your Resend API Key under the <em>Connected Inboxes</em> tab. Resend automatically authenticates your domain sending permissions via your Resend account.
-                </p>
-                <p>
-                  &bull; <strong>Using Custom In-House SMTP?</strong> Enter your domain below to audit your live DNS records (SPF, DMARC, MX) and generate custom 2048-bit RSA DKIM keys for direct SMTP email signing.
+                  Enter your sending domain below to generate unique <strong>2048-bit RSA DKIM Keys</strong> (`dkim._domainkey`), <strong>SPF</strong> (`v=spf1 ...`), and <strong>DMARC</strong> records. Copy these TXT records to your DNS provider (Cloudflare, Namecheap, GoDaddy) to authenticate your domain for direct email sending.
                 </p>
               </div>
 
