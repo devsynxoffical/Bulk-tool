@@ -146,17 +146,23 @@ export async function sendEmailMessage(params: {
       }
     }
 
+    const isPort465 = Number(account.port) === 465;
+    const isSecure = isPort465 ? true : Boolean(account.secure);
+
     const transporter = nodemailer.createTransport({
       host: account.host,
       port: account.port || 587,
-      secure: Boolean(account.secure),
+      secure: isSecure,
       auth: {
         user: account.username,
         pass: account.password,
       },
-      connectionTimeout: 8000,
-      greetingTimeout: 5000,
-      socketTimeout: 10000,
+      tls: {
+        rejectUnauthorized: false,
+      },
+      connectionTimeout: 10000,
+      greetingTimeout: 8000,
+      socketTimeout: 12000,
       dkim: dkimConfig,
     } as nodemailer.TransportOptions);
 

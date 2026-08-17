@@ -48,8 +48,13 @@ export async function POST(req: NextRequest) {
 
     const timeoutPromise = new Promise<{ messageId: string }>((_, reject) =>
       setTimeout(
-        () => reject(new Error(`SMTP Connection Timeout: Could not connect to host '${account.host}' on port ${account.port}. Please check your SMTP Host, Port, and Password.`)),
-        10000,
+        () =>
+          reject(
+            new Error(
+              `SMTP Connection Timeout: Host '${account.host}' on port ${account.port} did not respond within 15s. (Tip: For cPanel SMTP, try Host: 'mail.${account.fromEmail.split("@").pop()}' on Port 465 or 587. For Gmail, use 'smtp.gmail.com' on Port 587 with a 16-character Google App Password).`,
+            ),
+          ),
+        15000,
       ),
     );
 
