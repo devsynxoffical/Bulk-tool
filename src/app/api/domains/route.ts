@@ -19,18 +19,47 @@ export async function GET() {
       orderBy: { createdAt: "desc" },
     });
 
-    const formatted = domains.map((d) => ({
-      id: d.id,
-      domainName: d.domainName,
-      dkimSelector: d.dkimSelector || "dkim",
-      dkimPublicKey: d.dkimPublicKey || "",
-      spfVerified: Boolean(d.spfVerified),
-      dkimVerified: Boolean(d.dkimVerified),
-      dmarcVerified: Boolean(d.dmarcVerified),
-      mxVerified: Boolean(d.mxVerified),
-      isVerified: Boolean(d.isVerified),
-      lastCheckedAt: d.lastCheckedAt ? d.lastCheckedAt.toISOString() : null,
-    }));
+    // Re-verify live DNS on fetch to update stale DB records
+    const formatted = await Promise.all(
+      domains.map(async (d) => {
+        const selector = d.dkimSelector || "dkim";
+        const dnsResult = await verifyDomainDns(d.domainName, selector, d.dkimPublicKey);
+
+        // Update DB if state changed
+        if (
+          d.spfVerified !== dnsResult.spf.verified ||
+          d.dkimVerified !== dnsResult.dkim.verified ||
+          d.dmarcVerified !== dnsResult.dmarc.verified ||
+          d.mxVerified !== dnsResult.mx.verified ||
+          d.isVerified !== dnsResult.isFullyConfigured
+        ) {
+          await prisma.sendingDomain.update({
+            where: { id: d.id },
+            data: {
+              spfVerified: dnsResult.spf.verified,
+              dkimVerified: dnsResult.dkim.verified,
+              dmarcVerified: dnsResult.dmarc.verified,
+              mxVerified: dnsResult.mx.verified,
+              isVerified: dnsResult.isFullyConfigured,
+              lastCheckedAt: new Date(),
+            },
+          });
+        }
+
+        return {
+          id: d.id,
+          domainName: d.domainName,
+          dkimSelector: selector,
+          dkimPublicKey: d.dkimPublicKey || "",
+          spfVerified: dnsResult.spf.verified,
+          dkimVerified: dnsResult.dkim.verified,
+          dmarcVerified: dnsResult.dmarc.verified,
+          mxVerified: dnsResult.mx.verified,
+          isVerified: dnsResult.isFullyConfigured,
+          lastCheckedAt: new Date().toISOString(),
+        };
+      }),
+    );
 
     return NextResponse.json({ domains: formatted });
   } catch (e) {

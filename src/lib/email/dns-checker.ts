@@ -20,6 +20,7 @@ export async function verifyDomainDns(
   const domain = domainName.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
 
   let spfRecord: string | null = null;
+  let spfVerified = false;
   let dkimRecord: string | null = null;
   let dkimSelectorFound: string | null = null;
   let dmarcRecord: string | null = null;
@@ -30,7 +31,16 @@ export async function verifyDomainDns(
     const txtRecords = await dns.promises.resolveTxt(domain);
     const flat = txtRecords.map((r) => r.join(""));
     const spf = flat.find((r) => r.includes("v=spf1"));
-    if (spf) spfRecord = spf;
+    if (spf) {
+      spfRecord = spf;
+      // Strictly verify SPF contains our domain include or matches domain
+      const cleanSpf = spf.toLowerCase();
+      if (cleanSpf.includes(`include:${domain}`) || cleanSpf.includes(`a`) || cleanSpf.includes(`mx`)) {
+        spfVerified = true;
+      } else {
+        spfVerified = false;
+      }
+    }
   } catch {
     // ignore
   }
@@ -52,7 +62,6 @@ export async function verifyDomainDns(
     const dkim = flatDkim.find((r) => r.includes("v=DKIM1") || r.includes("k=rsa") || r.includes("p="));
     
     if (dkim) {
-      // If expectedPublicKey is provided, verify the key content matches
       if (expectedPublicKey) {
         const cleanExpected = expectedPublicKey.replace(/[\r\n\s]/g, "");
         const cleanFound = dkim.replace(/[\r\n\s]/g, "");
@@ -77,7 +86,6 @@ export async function verifyDomainDns(
     // ignore
   }
 
-  const spfVerified = Boolean(spfRecord);
   const dmarcVerified = Boolean(dmarcRecord);
   const dkimVerified = Boolean(dkimRecord);
   const mxVerified = mxHostList.length > 0;
