@@ -103,7 +103,15 @@ export default function LeadFinderPage() {
     pollRef.current = setInterval(async () => {
       try {
         const res = await fetch(`/api/scraper/jobs/${jobId}`);
-        if (!res.ok) return;
+        if (!res.ok) {
+          if (res.status === 404) {
+            localStorage.removeItem("active_scrape_job_id");
+            setJob(null);
+            setJobId(null);
+            if (pollRef.current) clearInterval(pollRef.current);
+          }
+          return;
+        }
         const data = (await res.json()) as ScrapeJob;
         setJob(data);
         if (data.status !== "running") {
