@@ -210,6 +210,21 @@ export function EmailForm() {
     }
   }
 
+  async function addAndAuditDomainForId(domainNameStr: string) {
+    setCheckingDomain(true);
+    try {
+      const res = await fetch("/api/domains", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domainName: domainNameStr }),
+      });
+      setCheckingDomain(false);
+      loadData();
+    } catch {
+      setCheckingDomain(false);
+    }
+  }
+
   async function deleteDomain(id: string) {
     await fetch(`/api/domains?id=${id}`, { method: "DELETE" });
     loadData();
@@ -519,7 +534,7 @@ export function EmailForm() {
                 </Button>
               </form>
 
-              <div className="space-y-3">
+              <div className="space-y-4">
                 {domains.map((d) => {
                   const isExpanded = expandedDomain === d.id;
                   const selector = d.dkimSelector || "dkim";
@@ -528,99 +543,231 @@ export function EmailForm() {
                   const dkimValue = d.dkimPublicKey
                     ? `v=DKIM1; k=rsa; p=${d.dkimPublicKey}`
                     : `v=DKIM1; k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQ...`;
+                  const mxValue = `mail.${d.domainName}`;
+
+                  const verifiedCount = [d.spfVerified, d.dkimVerified, d.dmarcVerified, d.mxVerified].filter(Boolean).length;
+                  const isFullyVerified = verifiedCount === 4;
 
                   return (
-                    <div key={d.id} className="rounded-lg border border-zinc-200 bg-white p-4 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Globe className="h-4 w-4 text-blue-600" />
-                          <span className="font-bold text-sm text-zinc-900">{d.domainName}</span>
+                    <div
+                      key={d.id}
+                      className="rounded-xl border border-zinc-200 bg-white p-5 shadow-xs transition hover:border-zinc-300 space-y-4"
+                    >
+                      {/* Header Row */}
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 pb-4">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                            <Globe className="h-5 w-5" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h3 className="font-bold text-base text-zinc-900">{d.domainName}</h3>
+                              {isFullyVerified ? (
+                                <Badge className="bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                  <Check className="h-3 w-3 mr-1" /> 100% Authenticated
+                                </Badge>
+                              ) : (
+                                <Badge className="bg-amber-100 text-amber-900 border border-amber-200">
+                                  ⚠️ Action Required ({verifiedCount}/4 Records)
+                                </Badge>
+                              )}
+                            </div>
+                            <p className="text-xs text-zinc-500 mt-0.5">
+                              {d.lastCheckedAt ? `Last audited ${new Date(d.lastCheckedAt).toLocaleTimeString()}` : "DNS check pending"}
+                            </p>
+                          </div>
                         </div>
+
                         <div className="flex items-center gap-2">
                           <Button
                             variant="outline"
                             size="sm"
-                            className="h-7 text-xs"
+                            className="h-8 text-xs border-zinc-200 hover:bg-zinc-50"
+                            onClick={() => addAndAuditDomainForId(d.domainName)}
+                            disabled={checkingDomain}
+                          >
+                            <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${checkingDomain ? "animate-spin" : ""}`} />
+                            Re-Verify DNS
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 text-xs border-blue-200 text-blue-700 bg-blue-50/50 hover:bg-blue-100"
                             onClick={() => setExpandedDomain(isExpanded ? null : d.id)}
                           >
                             {isExpanded ? <ChevronUp className="h-3.5 w-3.5 mr-1" /> : <ChevronDown className="h-3.5 w-3.5 mr-1" />}
                             {isExpanded ? "Hide DNS Records" : "View Required DNS Records"}
                           </Button>
-                          <Button variant="ghost" size="sm" onClick={() => deleteDomain(d.id)} className="h-7 text-xs text-rose-600">
-                            Remove
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => deleteDomain(d.id)}
+                            className="h-8 text-xs text-rose-600 hover:bg-rose-50"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
                           </Button>
                         </div>
                       </div>
 
-                      <div className="grid gap-2 sm:grid-cols-4 text-xs">
-                        <div className={`p-2 rounded-md border ${d.spfVerified ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-amber-50 border-amber-200 text-amber-800"}`}>
-                          <strong>SPF:</strong> {d.spfVerified ? "✅ Verified" : "⚠️ Missing v=spf1"}
+                      {/* Status Badges Grid */}
+                      <div className="grid gap-3 sm:grid-cols-4 text-xs font-medium">
+                        <div
+                          className={`flex items-center justify-between p-3 rounded-lg border ${
+                            d.spfVerified
+                              ? "bg-emerald-50/80 border-emerald-200 text-emerald-900"
+                              : "bg-amber-50/80 border-amber-200 text-amber-900"
+                          }`}
+                        >
+                          <span><strong>SPF Record</strong></span>
+                          <span>{d.spfVerified ? "✅ Verified" : "⚠️ Missing"}</span>
                         </div>
-                        <div className={`p-2 rounded-md border ${d.dkimVerified ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-amber-50 border-amber-200 text-amber-800"}`}>
-                          <strong>DKIM:</strong> {d.dkimVerified ? "✅ Verified" : "⚠️ Missing Selector"}
+                        <div
+                          className={`flex items-center justify-between p-3 rounded-lg border ${
+                            d.dkimVerified
+                              ? "bg-emerald-50/80 border-emerald-200 text-emerald-900"
+                              : "bg-amber-50/80 border-amber-200 text-amber-900"
+                          }`}
+                        >
+                          <span><strong>DKIM Key</strong></span>
+                          <span>{d.dkimVerified ? "✅ Verified" : "⚠️ Pending"}</span>
                         </div>
-                        <div className={`p-2 rounded-md border ${d.dmarcVerified ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-amber-50 border-amber-200 text-amber-800"}`}>
-                          <strong>DMARC:</strong> {d.dmarcVerified ? "✅ Verified" : "⚠️ Missing _dmarc TXT"}
+                        <div
+                          className={`flex items-center justify-between p-3 rounded-lg border ${
+                            d.dmarcVerified
+                              ? "bg-emerald-50/80 border-emerald-200 text-emerald-900"
+                              : "bg-amber-50/80 border-amber-200 text-amber-900"
+                          }`}
+                        >
+                          <span><strong>DMARC Record</strong></span>
+                          <span>{d.dmarcVerified ? "✅ Verified" : "⚠️ Missing"}</span>
                         </div>
-                        <div className={`p-2 rounded-md border ${d.mxVerified ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-rose-50 border-rose-200 text-rose-800"}`}>
-                          <strong>MX:</strong> {d.mxVerified ? "✅ Verified" : "❌ No MX Record"}
+                        <div
+                          className={`flex items-center justify-between p-3 rounded-lg border ${
+                            d.mxVerified
+                              ? "bg-emerald-50/80 border-emerald-200 text-emerald-900"
+                              : "bg-rose-50/80 border-rose-200 text-rose-900"
+                          }`}
+                        >
+                          <span><strong>MX Record</strong></span>
+                          <span>{d.mxVerified ? "✅ Verified" : "❌ No MX"}</span>
                         </div>
                       </div>
 
-                      {/* Expandable DNS Record Instructions */}
+                      {/* Expandable Copyable DNS Records */}
                       {isExpanded && (
-                        <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50/40 p-4 space-y-3 text-xs">
-                          <p className="font-semibold text-blue-950">
-                            Copy these DNS Records to your domain manager (Cloudflare / Namecheap / GoDaddy):
-                          </p>
+                        <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50/30 p-5 space-y-4 text-xs">
+                          <div className="flex items-center justify-between">
+                            <p className="font-bold text-sm text-blue-950">
+                              Copy &amp; Paste these 4 Records into your DNS Manager (Cloudflare, Namecheap, GoDaddy, cPanel):
+                            </p>
+                          </div>
 
-                          <div className="space-y-2">
-                            <div className="rounded border border-blue-200 bg-white p-2.5 space-y-1">
-                              <div className="flex items-center justify-between text-zinc-700">
-                                <span><strong>Type:</strong> TXT &bull; <strong>Host/Name:</strong> <code>@</code> (or <code>{d.domainName}</code>)</span>
+                          <div className="space-y-3">
+                            {/* 1. SPF */}
+                            <div className="rounded-lg border border-zinc-200 bg-white p-3.5 space-y-2 shadow-2xs">
+                              <div className="flex items-center justify-between text-zinc-800 font-medium">
+                                <div className="flex items-center gap-2">
+                                  <Badge tone="default" className="bg-zinc-100 text-zinc-700">TXT</Badge>
+                                  <span>Host / Name: <code className="bg-zinc-100 px-1.5 py-0.5 rounded font-mono font-bold text-zinc-900">@</code> (or <code>{d.domainName}</code>)</span>
+                                </div>
                                 <Button
-                                  variant="ghost"
+                                  variant="outline"
                                   size="sm"
-                                  className="h-6 text-[11px]"
+                                  className="h-7 text-xs border-zinc-200 hover:bg-zinc-50"
                                   onClick={() => copyToClipboard(spfValue, `spf_${d.id}`)}
                                 >
-                                  {copiedKey === `spf_${d.id}` ? <Check className="h-3 w-3 text-emerald-600 mr-1" /> : <Copy className="h-3 w-3 mr-1" />}
-                                  Copy SPF
+                                  {copiedKey === `spf_${d.id}` ? (
+                                    <Check className="h-3.5 w-3.5 text-emerald-600 mr-1" />
+                                  ) : (
+                                    <Copy className="h-3.5 w-3.5 mr-1" />
+                                  )}
+                                  {copiedKey === `spf_${d.id}` ? "Copied!" : "Copy SPF TXT"}
                                 </Button>
                               </div>
-                              <p className="font-mono text-[11px] text-zinc-800 bg-zinc-50 p-1.5 rounded">{spfValue}</p>
+                              <div className="font-mono text-[11px] text-zinc-900 bg-zinc-50 p-2.5 rounded-md border border-zinc-200/80 break-all select-all">
+                                {spfValue}
+                              </div>
                             </div>
 
-                            <div className="rounded border border-blue-200 bg-white p-2.5 space-y-1">
-                              <div className="flex items-center justify-between text-zinc-700">
-                                <span><strong>Type:</strong> TXT &bull; <strong>Host/Name:</strong> <code>_dmarc</code></span>
+                            {/* 2. DMARC */}
+                            <div className="rounded-lg border border-zinc-200 bg-white p-3.5 space-y-2 shadow-2xs">
+                              <div className="flex items-center justify-between text-zinc-800 font-medium">
+                                <div className="flex items-center gap-2">
+                                  <Badge tone="default" className="bg-zinc-100 text-zinc-700">TXT</Badge>
+                                  <span>Host / Name: <code className="bg-zinc-100 px-1.5 py-0.5 rounded font-mono font-bold text-zinc-900">_dmarc</code></span>
+                                </div>
                                 <Button
-                                  variant="ghost"
+                                  variant="outline"
                                   size="sm"
-                                  className="h-6 text-[11px]"
+                                  className="h-7 text-xs border-zinc-200 hover:bg-zinc-50"
                                   onClick={() => copyToClipboard(dmarcValue, `dmarc_${d.id}`)}
                                 >
-                                  {copiedKey === `dmarc_${d.id}` ? <Check className="h-3 w-3 text-emerald-600 mr-1" /> : <Copy className="h-3 w-3 mr-1" />}
-                                  Copy DMARC
+                                  {copiedKey === `dmarc_${d.id}` ? (
+                                    <Check className="h-3.5 w-3.5 text-emerald-600 mr-1" />
+                                  ) : (
+                                    <Copy className="h-3.5 w-3.5 mr-1" />
+                                  )}
+                                  {copiedKey === `dmarc_${d.id}` ? "Copied!" : "Copy DMARC TXT"}
                                 </Button>
                               </div>
-                              <p className="font-mono text-[11px] text-zinc-800 bg-zinc-50 p-1.5 rounded">{dmarcValue}</p>
+                              <div className="font-mono text-[11px] text-zinc-900 bg-zinc-50 p-2.5 rounded-md border border-zinc-200/80 break-all select-all">
+                                {dmarcValue}
+                              </div>
                             </div>
 
-                            <div className="rounded border border-blue-200 bg-white p-2.5 space-y-1">
-                              <div className="flex items-center justify-between text-zinc-700">
-                                <span><strong>Type:</strong> TXT &bull; <strong>Host/Name:</strong> <code>{selector}._domainkey</code></span>
+                            {/* 3. DKIM 2048-bit Key */}
+                            <div className="rounded-lg border border-blue-300 bg-white p-3.5 space-y-2 shadow-2xs">
+                              <div className="flex items-center justify-between text-blue-950 font-medium">
+                                <div className="flex items-center gap-2">
+                                  <Badge className="bg-blue-600 text-white">2048-bit RSA DKIM Key</Badge>
+                                  <span>Host / Name: <code className="bg-blue-50 text-blue-900 px-1.5 py-0.5 rounded font-mono font-bold">{selector}._domainkey</code></span>
+                                </div>
                                 <Button
-                                  variant="ghost"
+                                  variant="default"
                                   size="sm"
-                                  className="h-6 text-[11px]"
+                                  className="h-7 text-xs bg-blue-600 hover:bg-blue-700 text-white"
                                   onClick={() => copyToClipboard(dkimValue, `dkim_${d.id}`)}
                                 >
-                                  {copiedKey === `dkim_${d.id}` ? <Check className="h-3 w-3 text-emerald-600 mr-1" /> : <Copy className="h-3 w-3 mr-1" />}
-                                  Copy DKIM
+                                  {copiedKey === `dkim_${d.id}` ? (
+                                    <Check className="h-3.5 w-3.5 mr-1" />
+                                  ) : (
+                                    <Copy className="h-3.5 w-3.5 mr-1" />
+                                  )}
+                                  {copiedKey === `dkim_${d.id}` ? "Copied Key!" : "Copy DKIM Key"}
                                 </Button>
                               </div>
-                              <p className="font-mono text-[11px] text-zinc-800 bg-zinc-50 p-1.5 rounded break-all">{dkimValue}</p>
+                              <div className="font-mono text-[11px] text-zinc-900 bg-zinc-50 p-3 rounded-md border border-zinc-200/80 leading-relaxed break-all select-all">
+                                {dkimValue}
+                              </div>
+                              <p className="text-[10px] text-zinc-500 italic">
+                                * This key is generated specifically for {d.domainName}. Copy the full value starting with <code>v=DKIM1; k=rsa; p=...</code>
+                              </p>
+                            </div>
+
+                            {/* 4. MX Record */}
+                            <div className="rounded-lg border border-zinc-200 bg-white p-3.5 space-y-2 shadow-2xs">
+                              <div className="flex items-center justify-between text-zinc-800 font-medium">
+                                <div className="flex items-center gap-2">
+                                  <Badge tone="default" className="bg-zinc-100 text-zinc-700">MX</Badge>
+                                  <span>Host / Name: <code className="bg-zinc-100 px-1.5 py-0.5 rounded font-mono font-bold text-zinc-900">@</code> &bull; Priority: <code>10</code></span>
+                                </div>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 text-xs border-zinc-200 hover:bg-zinc-50"
+                                  onClick={() => copyToClipboard(mxValue, `mx_${d.id}`)}
+                                >
+                                  {copiedKey === `mx_${d.id}` ? (
+                                    <Check className="h-3.5 w-3.5 text-emerald-600 mr-1" />
+                                  ) : (
+                                    <Copy className="h-3.5 w-3.5 mr-1" />
+                                  )}
+                                  {copiedKey === `mx_${d.id}` ? "Copied!" : "Copy MX Target"}
+                                </Button>
+                              </div>
+                              <div className="font-mono text-[11px] text-zinc-900 bg-zinc-50 p-2.5 rounded-md border border-zinc-200/80 break-all select-all">
+                                {mxValue}
+                              </div>
                             </div>
                           </div>
                         </div>
