@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Users } from "lucide-react";
+import { Users, Eye, Edit3, Sparkles, Mail, Send } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
-import { Input, Label, Select } from "@/components/ui/input";
+import { Input, Label, Textarea } from "@/components/ui/input";
 import {
   Card,
   CardContent,
@@ -13,6 +13,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 
 type Template = {
   id: string;
@@ -41,33 +42,45 @@ export default function NewCampaignPage() {
 
   const [allTemplates, setAllTemplates] = useState<Template[]>([]);
   const [allContacts, setAllContacts] = useState<ContactSummary[]>([]);
-  const [channel, setChannel] = useState<"WHATSAPP" | "EMAIL">("EMAIL");
   const [name, setName] = useState("");
   const [templateId, setTemplateId] = useState("");
+  const [customSubject, setCustomSubject] = useState("");
+  const [customBody, setCustomBody] = useState("");
+  const [viewMode, setViewMode] = useState<"preview" | "edit">("preview");
   const [tag, setTag] = useState(initialTag);
   const [rate, setRate] = useState(10);
-  const [var1, setVar1] = useState("name");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    void fetch("/api/templates")
+    fetch("/api/templates")
       .then((r) => r.json())
-      .then((data: Template[]) => setAllTemplates(data));
+      .then((data: Template[]) => {
+        if (Array.isArray(data)) {
+          const approvedEmailTemplates = data.filter((t) => t.channel === "EMAIL");
+          setAllTemplates(approvedEmailTemplates);
+          if (approvedEmailTemplates.length > 0) {
+            setTemplateId(approvedEmailTemplates[0].id);
+            setCustomSubject(approvedEmailTemplates[0].subject || "");
+            setCustomBody(approvedEmailTemplates[0].body || "");
+          }
+        }
+      });
 
-    void fetch("/api/contacts")
+    fetch("/api/contacts")
       .then((r) => r.json())
       .then((data: ContactSummary[]) => {
         if (Array.isArray(data)) setAllContacts(data);
       });
   }, []);
 
-  const templates = allTemplates.filter(
-    (t) => t.status === "APPROVED" && t.channel === channel,
-  );
-  const selected = templates.find((t) => t.id === templateId);
-  if (selected === undefined && templates[0]) {
-    setTemplateId(templates[0].id);
+  function handleSelectTemplate(tId: string) {
+    setTemplateId(tId);
+    const found = allTemplates.find((t) => t.id === tId);
+    if (found) {
+      setCustomSubject(found.subject || "");
+      setCustomBody(found.body || "");
+    }
   }
 
   // Calculate live matching leads
@@ -75,20 +88,21 @@ export default function NewCampaignPage() {
     if (tag.trim()) {
       if (!c.tags.includes(tag.trim())) return false;
     }
-    if (channel === "WHATSAPP") {
-      return Boolean(c.phone && !c.optedOut);
-    } else {
-      return Boolean(c.email && !c.emailOptedOut);
-    }
+    return Boolean(c.email && !c.emailOptedOut);
   }).length;
 
-  function switchChannel(c: "WHATSAPP" | "EMAIL") {
-    setChannel(c);
-    setTemplateId("");
+  function renderPreviewHtml(content: string) {
+    if (!content) return "<p style='color:#888;'>No template content loaded.</p>";
+    if (content.includes("<") && content.includes(">")) {
+      return content;
+    }
+    return `<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:16px;white-space:pre-wrap;color:#18181b;">${content}</div>`;
   }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!name.trim()) return;
+
     setLoading(true);
     setError("");
 
@@ -96,12 +110,13 @@ export default function NewCampaignPage() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        name,
-        channel,
-        templateId,
+        name: name.trim(),
+        channel: "EMAIL",
+        templateId: templateId || undefined,
+        customSubject: customSubject || undefined,
+        customBody: customBody || undefined,
         tag: tag || undefined,
         rateLimitPerSecond: rate,
-        variableMapping: { "1": var1 },
       }),
     });
 
@@ -109,7 +124,7 @@ export default function NewCampaignPage() {
     setLoading(false);
 
     if (!res.ok) {
-      setError(typeof data.error === "string" ? data.error : "Failed to create");
+      setError(typeof data.error === "string" ? data.error : "Failed to launch campaign");
       return;
     }
 
@@ -118,126 +133,171 @@ export default function NewCampaignPage() {
   }
 
   return (
-    <div>
+    <div className="mx-auto max-w-4xl space-y-6">
       <PageHeader
-        title="New campaign"
-        description="Send bulk email or WhatsApp campaigns to your target leads."
+        title="Launch New Cold Email Campaign"
+        description="Send targeted bulk cold outreach to your verified lead database with round-robin inbox rotation."
       />
 
-      <form onSubmit={onSubmit} className="mx-auto max-w-2xl space-y-4">
-        <Card>
+      <form onSubmit={onSubmit} className="space-y-6">
+        <Card className="rounded-xl border border-zinc-200/90 shadow-xs">
           <CardHeader>
-            <CardTitle>Campaign details</CardTitle>
-            <CardDescription>
-              Email campaigns send via Resend/SMTP; WhatsApp campaigns send to clients with valid phone numbers.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-1.5">
-              <Label>Channel</Label>
-              <div className="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50/50 p-2.5 text-xs text-blue-900 font-semibold">
-                <span>✉️ Email Cold Outreach Campaign (Multi-Inbox Rotation Enabled)</span>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-base font-bold text-zinc-900">Campaign Configuration</CardTitle>
+                <CardDescription>
+                  Configure audience targeting, select your template, and preview HTML email rendering.
+                </CardDescription>
               </div>
+              <Badge tone="default" className="bg-blue-50 text-blue-900 border border-blue-200">
+                <Sparkles className="h-3.5 w-3.5 mr-1 text-blue-600" />
+                DKIM &amp; Rotation Active
+              </Badge>
             </div>
+          </CardHeader>
 
-            <div className="space-y-1.5">
-              <Label>Campaign name</Label>
-              <Input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Spring outreach"
-                required
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label>Template ({channel.toLowerCase()})</Label>
-              <Select
-                value={templateId}
-                onChange={(e) => setTemplateId(e.target.value)}
-                required
-              >
-                <option value="" disabled>
-                  Select template
-                </option>
-                {templates.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                    {t.isSample ? " (sample)" : ""} · {t.language}
-                  </option>
-                ))}
-              </Select>
-              {selected ? (
-                <div className="space-y-2 rounded-md border border-zinc-100 bg-zinc-50 p-3 text-xs text-zinc-600">
-                  {selected.subject ? (
-                    <p className="font-medium text-zinc-800">
-                      {selected.subject}
-                    </p>
-                  ) : null}
-                  <p className="whitespace-pre-wrap">{selected.body}</p>
-                </div>
-              ) : null}
-              {templates.length === 0 ? (
-                <p className="text-xs text-amber-700">
-                  No approved {channel.toLowerCase()} templates. Create one in{" "}
-                  <a href="/templates" className="underline">
-                    Templates
-                  </a>
-                  .
-                </p>
-              ) : null}
-            </div>
-
+          <CardContent className="space-y-5">
+            {/* Campaign Name & Tag */}
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
+                <Label className="text-xs font-bold text-zinc-800">Campaign Name *</Label>
+                <Input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. Q3 Real Estate Outreach"
+                  required
+                />
+              </div>
+
+              <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <Label>Audience tag (optional)</Label>
+                  <Label className="text-xs font-bold text-zinc-800">Target Audience Tag (Optional)</Label>
                   <span className="flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
                     <Users className="h-3 w-3" />
-                    {matchingLeadsCount} Leads
+                    {matchingLeadsCount} Leads Selected
                   </span>
                 </div>
                 <Input
                   value={tag}
                   onChange={(e) => setTag(e.target.value)}
-                  placeholder="e.g. maps-leads or dentists"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Rate limit / second</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={80}
-                  value={rate}
-                  onChange={(e) => setRate(Number(e.target.value))}
+                  placeholder="e.g. maps-leads or real-estate"
                 />
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label>Template variable {"{{1}}"} maps to</Label>
-              <Select value={var1} onChange={(e) => setVar1(e.target.value)}>
-                <option value="name">Contact name</option>
-                <option value="phone">Phone</option>
-                <option value="email">Email</option>
-              </Select>
+            {/* Template Selector */}
+            <div className="space-y-2 border-t border-zinc-100 pt-4">
+              <Label className="text-xs font-bold text-zinc-800">Select Outreach Template *</Label>
+              <select
+                value={templateId}
+                onChange={(e) => handleSelectTemplate(e.target.value)}
+                className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {allTemplates.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name} ({t.subject || "No Subject"})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Preview & Edit Mode Toggle */}
+            <div className="rounded-xl border border-zinc-200 bg-zinc-50/50 p-4 space-y-4">
+              <div className="flex items-center justify-between border-b border-zinc-200/80 pb-3">
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant={viewMode === "preview" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setViewMode("preview")}
+                    className="h-8 text-xs"
+                  >
+                    <Eye className="h-3.5 w-3.5 mr-1.5" />
+                    Live Visual HTML Preview
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={viewMode === "edit" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setViewMode("edit")}
+                    className="h-8 text-xs"
+                  >
+                    <Edit3 className="h-3.5 w-3.5 mr-1.5" />
+                    Edit Subject &amp; Body
+                  </Button>
+                </div>
+                <span className="text-[11px] font-medium text-zinc-500">
+                  {viewMode === "preview" ? "Showing compiled visual layout" : "Editing template source text"}
+                </span>
+              </div>
+
+              {/* View Mode 1: Live Visual HTML Preview */}
+              {viewMode === "preview" ? (
+                <div className="space-y-3">
+                  <div className="rounded-lg border border-zinc-200 bg-white p-3 space-y-1">
+                    <p className="text-xs text-zinc-500">
+                      <strong>Subject Line:</strong> <span className="font-bold text-zinc-900">{customSubject || "(No Subject Set)"}</span>
+                    </p>
+                  </div>
+
+                  <div className="rounded-lg border border-zinc-200 bg-white shadow-2xs overflow-hidden min-h-[320px]">
+                    <iframe
+                      srcDoc={renderPreviewHtml(customBody)}
+                      title="Email Live Preview"
+                      className="w-full min-h-[360px] border-0"
+                    />
+                  </div>
+                </div>
+              ) : (
+                /* View Mode 2: Edit Subject & Body */
+                <div className="space-y-4 bg-white p-4 rounded-lg border border-zinc-200">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold text-zinc-800">Email Subject Line</Label>
+                    <Input
+                      value={customSubject}
+                      onChange={(e) => setCustomSubject(e.target.value)}
+                      placeholder="Enter custom email subject..."
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold text-zinc-800">Email Body HTML / Plain Text</Label>
+                    <Textarea
+                      rows={10}
+                      value={customBody}
+                      onChange={(e) => setCustomBody(e.target.value)}
+                      placeholder="Enter HTML or email template body text..."
+                      className="font-mono text-xs leading-relaxed"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
 
         {error ? (
-          <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-xs font-medium text-rose-950">
             {error}
-          </p>
+          </div>
         ) : null}
 
-        <div className="flex gap-2">
-          <Button type="submit" disabled={loading || !templates.length}>
-            {loading ? "Creating…" : `Create Campaign (${matchingLeadsCount} Leads)`}
-          </Button>
-          <Button type="button" variant="outline" onClick={() => router.back()}>
+        <div className="flex items-center justify-between">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => router.back()}
+            className="text-xs"
+          >
             Cancel
+          </Button>
+
+          <Button
+            type="submit"
+            disabled={loading || matchingLeadsCount === 0}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs px-6"
+          >
+            {loading ? "Launching Campaign..." : `Launch Cold Campaign (${matchingLeadsCount} Leads)`}
           </Button>
         </div>
       </form>

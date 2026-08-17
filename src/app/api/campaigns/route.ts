@@ -5,8 +5,10 @@ import { requireSession } from "@/lib/api";
 
 const createSchema = z.object({
   name: z.string().min(2),
-  channel: z.enum(["WHATSAPP", "EMAIL"]).default("WHATSAPP"),
+  channel: z.enum(["WHATSAPP", "EMAIL"]).default("EMAIL"),
   templateId: z.string().min(1),
+  customSubject: z.string().optional(),
+  customBody: z.string().optional(),
   tag: z.string().optional(),
   rateLimitPerSecond: z.number().int().min(1).max(80).optional(),
   variableMapping: z.record(z.string(), z.string()).optional(),
@@ -30,45 +32,38 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+    return NextResponse.json({ error: "Invalid campaign parameters" }, { status: 400 });
   }
 
-  const template = await prisma.template.findUnique({
+  let template = await prisma.template.findUnique({
     where: { id: parsed.data.templateId },
   });
   if (!template) {
     return NextResponse.json({ error: "Template not found" }, { status: 404 });
   }
-  if (template.channel !== parsed.data.channel) {
-    return NextResponse.json(
-      { error: "Template channel does not match campaign channel" },
-      { status: 400 },
-    );
-  }
-  if (template.status !== "APPROVED") {
-    return NextResponse.json(
-      { error: "Only APPROVED templates can be used in campaigns" },
-      { status: 400 },
-    );
+
+  // If user provided customized subject or body, update template content
+  if (parsed.data.customSubject || parsed.data.customBody) {
+    template = await prisma.template.update({
+      where: { id: template.id },
+      data: {
+        subject: parsed.data.customSubject || template.subject,
+        body: parsed.data.customBody || template.body,
+      },
+    });
   }
 
   const contacts = await prisma.contact.findMany({
     where: {
-      ...(parsed.data.channel === "WHATSAPP"
-        ? { optedOut: false, phone: { not: null } }
-        : { emailOptedOut: false, email: { not: null } }),
+      emailOptedOut: false,
+      email: { not: null },
       ...(parsed.data.tag ? { tags: { has: parsed.data.tag } } : {}),
     },
   });
 
   if (!contacts.length) {
     return NextResponse.json(
-      {
-        error:
-          parsed.data.channel === "EMAIL"
-            ? "No contacts with email found for this audience"
-            : "No contacts with phone found for this audience",
-      },
+      { error: "No contacts with email found for this target audience" },
       { status: 400 },
     );
   }
@@ -76,7 +71,7 @@ export async function POST(req: NextRequest) {
   const campaign = await prisma.campaign.create({
     data: {
       name: parsed.data.name,
-      channel: parsed.data.channel,
+      channel: "EMAIL",
       templateId: template.id,
       rateLimitPerSecond: parsed.data.rateLimitPerSecond || 10,
       variableMapping: parsed.data.variableMapping || {},
