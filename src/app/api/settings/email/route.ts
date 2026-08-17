@@ -64,7 +64,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const parsed = schema.safeParse(body);
     if (!parsed.success) {
-      return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+      const issues = parsed.error.issues.map((i) => i.message).join(" | ");
+      return NextResponse.json({ error: issues || "Invalid input data" }, { status: 400 });
     }
 
     const { id, password, signature, dailyLimit, isActive, ...rest } = parsed.data;

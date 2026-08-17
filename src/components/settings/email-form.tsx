@@ -183,6 +183,15 @@ export function EmailForm() {
     setFromEmail("");
     setFromName("");
     setDailyLimit(50);
+    setMessage(null);
+
+    // Smooth scroll to form element
+    const formElement = document.getElementById("mailbox-form-card");
+    if (formElement) {
+      formElement.scrollIntoView({ behavior: "smooth" });
+      const hostInput = formElement.querySelector("input") as HTMLInputElement | null;
+      if (hostInput) setTimeout(() => hostInput.focus(), 300);
+    }
   }
 
   async function addAndAuditDomain(e: React.FormEvent) {
@@ -398,7 +407,7 @@ export function EmailForm() {
               <CardDescription>Support Gmail, Outlook, cPanel, or custom SMTP servers</CardDescription>
             </CardHeader>
             <CardContent>
-              <form onSubmit={saveInbox} className="space-y-4">
+              <form id="mailbox-form-card" onSubmit={saveInbox} className="space-y-4">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label>SMTP Host</Label>
