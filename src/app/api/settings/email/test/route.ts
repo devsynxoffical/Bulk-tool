@@ -32,7 +32,8 @@ export async function POST(req: NextRequest) {
 
     const target = parsed.data.to?.trim() || account.fromEmail;
 
-    const result = await sendEmailMessage({
+    // Hard 10-second timeout to prevent request hanging on bad SMTP connection
+    const sendPromise = sendEmailMessage({
       to: target,
       subject: "Test Email from DEVSYNX Email Suite",
       html: `
@@ -44,6 +45,15 @@ export async function POST(req: NextRequest) {
       `,
       account: account,
     });
+
+    const timeoutPromise = new Promise<{ messageId: string }>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`SMTP Connection Timeout: Could not connect to host '${account.host}' on port ${account.port}. Please check your SMTP Host, Port, and Password.`)),
+        10000,
+      ),
+    );
+
+    const result = await Promise.race([sendPromise, timeoutPromise]);
 
     return NextResponse.json({ success: true, sentTo: target, messageId: result.messageId });
   } catch (e) {

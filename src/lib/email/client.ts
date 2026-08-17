@@ -154,6 +154,9 @@ export async function sendEmailMessage(params: {
         user: account.username,
         pass: account.password,
       },
+      connectionTimeout: 8000,
+      greetingTimeout: 5000,
+      socketTimeout: 10000,
       dkim: dkimConfig,
     } as nodemailer.TransportOptions);
 
