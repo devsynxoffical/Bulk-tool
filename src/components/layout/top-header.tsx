@@ -10,7 +10,6 @@ const titles: Record<string, { title: string; crumb: string }> = {
   "/": { title: "Overview", crumb: "DEVSYNX Email Suite" },
   "/emails": { title: "Sent Email Tracker", crumb: "Email Outbox" },
   "/compose": { title: "Compose Email", crumb: "Direct Email" },
-  "/inbox": { title: "Inbox & Replies", crumb: "Email Inbox" },
   "/campaigns": { title: "Cold Campaigns", crumb: "Outreach" },
   "/campaigns/new": { title: "New Campaign", crumb: "Cold Outreach" },
   "/leads": { title: "Lead Finder", crumb: "Scraped Leads" },
