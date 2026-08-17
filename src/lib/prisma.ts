@@ -13,7 +13,6 @@ function createPrismaClient() {
 function getPrismaClient() {
   const existing = globalForPrisma.prisma;
 
-  // Hot reload can keep an old client after schema changes — recreate if needed.
   if (
     existing &&
     typeof (existing as unknown as { emailAccount?: unknown }).emailAccount !==
@@ -34,3 +33,72 @@ function getPrismaClient() {
 }
 
 export const prisma = getPrismaClient();
+
+let isEnsured = false;
+
+/**
+ * Self-healing runtime schema synchronizer.
+ * Ensures PostgreSQL tables (SendingDomain, SuppressionList) and columns
+ * exist in the remote database even if Railway bypasses 'prisma db push'.
+ */
+export async function ensureDbSchema() {
+  if (isEnsured) return;
+  isEnsured = true;
+
+  try {
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "SendingDomain" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "domainName" TEXT NOT NULL UNIQUE,
+        "dkimPrivateKey" TEXT,
+        "dkimPublicKey" TEXT,
+        "dkimSelector" TEXT NOT NULL DEFAULT 'dkim',
+        "spfVerified" BOOLEAN NOT NULL DEFAULT false,
+        "dkimVerified" BOOLEAN NOT NULL DEFAULT false,
+        "dmarcVerified" BOOLEAN NOT NULL DEFAULT false,
+        "mxVerified" BOOLEAN NOT NULL DEFAULT false,
+        "isVerified" BOOLEAN NOT NULL DEFAULT false,
+        "lastCheckedAt" TIMESTAMP(3),
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "SuppressionList" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "email" TEXT NOT NULL UNIQUE,
+        "reason" TEXT NOT NULL DEFAULT 'UNSUBSCRIBED',
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "dailyLimit" INTEGER NOT NULL DEFAULT 50;
+    `);
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "sentToday" INTEGER NOT NULL DEFAULT 0;
+    `);
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "healthScore" INTEGER NOT NULL DEFAULT 100;
+    `);
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "lastSentAt" TIMESTAMP(3);
+    `);
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "warmupEnabled" BOOLEAN NOT NULL DEFAULT false;
+    `);
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "warmupStage" INTEGER NOT NULL DEFAULT 1;
+    `);
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "bounceCount" INTEGER NOT NULL DEFAULT 0;
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "Contact" ADD COLUMN IF NOT EXISTS "emailOptedOut" BOOLEAN NOT NULL DEFAULT false;
+    `);
+  } catch (err) {
+    console.error("Auto-schema sync warning:", err);
+  }
+}

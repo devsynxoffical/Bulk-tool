@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
+import { prisma, ensureDbSchema } from "@/lib/prisma";
 import { requireSession } from "@/lib/api";
 
 const schema = z.object({
@@ -24,6 +24,7 @@ export async function GET() {
   if (error) return error;
 
   try {
+    await ensureDbSchema();
     const accounts = await prisma.emailAccount.findMany({
       orderBy: { createdAt: "desc" },
     });
@@ -62,6 +63,7 @@ export async function POST(req: NextRequest) {
   if (error) return error;
 
   try {
+    await ensureDbSchema();
     const body = await req.json();
     const parsed = schema.safeParse(body);
     if (!parsed.success) {

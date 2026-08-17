@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
+import { prisma, ensureDbSchema } from "@/lib/prisma";
 import { requireSession } from "@/lib/api";
 import { generateDkimKeyPair } from "@/lib/email/dkim";
 import { verifyDomainDns } from "@/lib/email/dns-checker";
@@ -14,6 +14,7 @@ export async function GET() {
   if (error) return error;
 
   try {
+    await ensureDbSchema();
     const domains = await prisma.sendingDomain.findMany({
       orderBy: { createdAt: "desc" },
     });
@@ -46,6 +47,7 @@ export async function POST(req: NextRequest) {
   if (error) return error;
 
   try {
+    await ensureDbSchema();
     const parsed = schema.safeParse(await req.json());
     if (!parsed.success) {
       return NextResponse.json({ error: "Invalid domain name" }, { status: 400 });
