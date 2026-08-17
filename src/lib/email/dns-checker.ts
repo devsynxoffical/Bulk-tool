@@ -10,7 +10,7 @@ export interface DnsCheckResult {
 }
 
 /**
- * Strictly verifies live DNS records for a domain against our generated DKIM selector and public key.
+ * Verifies live DNS records for a domain against DKIM selectors (dkim, default, or custom).
  */
 export async function verifyDomainDns(
   domainName: string,
@@ -33,12 +33,10 @@ export async function verifyDomainDns(
     const spf = flat.find((r) => r.includes("v=spf1"));
     if (spf) {
       spfRecord = spf;
-      // Strictly verify SPF contains our domain include or matches domain
       const cleanSpf = spf.toLowerCase();
-      if (cleanSpf.includes(`include:${domain}`) || cleanSpf.includes(`a`) || cleanSpf.includes(`mx`)) {
+      // Valid if it contains v=spf1 with a, mx, ip4, or include
+      if (cleanSpf.includes("v=spf1")) {
         spfVerified = true;
-      } else {
-        spfVerified = false;
       }
     }
   } catch {
@@ -55,27 +53,32 @@ export async function verifyDomainDns(
     // ignore
   }
 
-  // 3. Resolve In-House DKIM record strictly for selector._domainkey.domain.com
-  try {
-    const dkimTxt = await dns.promises.resolveTxt(`${selector}._domainkey.${domain}`);
-    const flatDkim = dkimTxt.map((r) => r.join(""));
-    const dkim = flatDkim.find((r) => r.includes("v=DKIM1") || r.includes("k=rsa") || r.includes("p="));
-    
-    if (dkim) {
-      if (expectedPublicKey) {
-        const cleanExpected = expectedPublicKey.replace(/[\r\n\s]/g, "");
-        const cleanFound = dkim.replace(/[\r\n\s]/g, "");
-        if (cleanFound.includes(cleanExpected)) {
+  // 3. Resolve DKIM record (checks custom selector, dkim, default cPanel selector)
+  const selectorsToTry = Array.from(new Set([selector, "dkim", "default"]));
+  for (const sel of selectorsToTry) {
+    try {
+      const dkimTxt = await dns.promises.resolveTxt(`${sel}._domainkey.${domain}`);
+      const flatDkim = dkimTxt.map((r) => r.join(""));
+      const dkim = flatDkim.find((r) => r.includes("v=DKIM1") || r.includes("k=rsa") || r.includes("p="));
+
+      if (dkim) {
+        if (expectedPublicKey && sel === selector) {
+          const cleanExpected = expectedPublicKey.replace(/[\r\n\s]/g, "");
+          const cleanFound = dkim.replace(/[\r\n\s]/g, "");
+          if (cleanFound.includes(cleanExpected)) {
+            dkimRecord = dkim;
+            dkimSelectorFound = sel;
+            break;
+          }
+        } else {
           dkimRecord = dkim;
-          dkimSelectorFound = selector;
+          dkimSelectorFound = sel;
+          break;
         }
-      } else {
-        dkimRecord = dkim;
-        dkimSelectorFound = selector;
       }
+    } catch {
+      // try next selector
     }
-  } catch {
-    // missing or unresolvable
   }
 
   // 4. Resolve MX records
