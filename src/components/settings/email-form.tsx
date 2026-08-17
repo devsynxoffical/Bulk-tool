@@ -196,17 +196,17 @@ export function EmailForm() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ domainName: newDomain.trim() }),
       });
-      const data = await res.json();
+      const data = res.ok ? await res.json() : await res.json().catch(() => ({ error: "Server returned error status " + res.status }));
       setCheckingDomain(false);
       if (res.ok) {
         setNewDomain("");
         loadData();
       } else {
-        alert(data.error || "Domain check failed");
+        alert(typeof data?.error === "string" ? data.error : "Domain check failed");
       }
-    } catch {
+    } catch (e) {
       setCheckingDomain(false);
-      alert("Failed to check domain DNS");
+      alert(e instanceof Error ? e.message : "Failed to check domain DNS");
     }
   }
 
