@@ -545,8 +545,8 @@ export function EmailForm() {
                     : `v=DKIM1; k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQ...`;
                   const mxValue = `mail.${d.domainName}`;
 
-                  const verifiedCount = [d.spfVerified, d.dkimVerified, d.dmarcVerified, d.mxVerified].filter(Boolean).length;
-                  const isFullyVerified = verifiedCount === 4;
+                  const authCount = [d.spfVerified, d.dkimVerified, d.dmarcVerified].filter(Boolean).length;
+                  const isFullyVerified = authCount === 3;
 
                   return (
                     <div
@@ -563,12 +563,12 @@ export function EmailForm() {
                             <div className="flex items-center gap-2">
                               <h3 className="font-bold text-base text-zinc-900">{d.domainName}</h3>
                               {isFullyVerified ? (
-                                <Badge className="bg-emerald-100 text-emerald-800 border border-emerald-200">
-                                  <Check className="h-3 w-3 mr-1" /> 100% Authenticated
+                                <Badge className="bg-emerald-100 text-emerald-800 border border-emerald-200 font-semibold">
+                                  <Check className="h-3 w-3 mr-1" /> 100% Authenticated (3/3 Records)
                                 </Badge>
                               ) : (
-                                <Badge className="bg-amber-100 text-amber-900 border border-amber-200">
-                                  ⚠️ Action Required ({verifiedCount}/4 Records)
+                                <Badge className="bg-amber-100 text-amber-900 border border-amber-200 font-semibold">
+                                  ⚠️ Action Required ({authCount}/3 Records Verified)
                                 </Badge>
                               )}
                             </div>

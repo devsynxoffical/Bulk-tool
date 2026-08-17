@@ -9,9 +9,13 @@ export interface DnsCheckResult {
   isFullyConfigured: boolean;
 }
 
+/**
+ * Strictly verifies live DNS records for a domain against our generated DKIM selector and public key.
+ */
 export async function verifyDomainDns(
   domainName: string,
-  customSelector: string = "dkim",
+  selector: string = "dkim",
+  expectedPublicKey?: string | null,
 ): Promise<DnsCheckResult> {
   const domain = domainName.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
 
@@ -41,21 +45,28 @@ export async function verifyDomainDns(
     // ignore
   }
 
-  // 3. Resolve In-House DKIM record (checks customSelector dkim._domainkey.domain.com)
-  const selectors = Array.from(new Set([customSelector, "dkim", "default"]));
-  for (const selector of selectors) {
-    try {
-      const dkimTxt = await dns.promises.resolveTxt(`${selector}._domainkey.${domain}`);
-      const flatDkim = dkimTxt.map((r) => r.join(""));
-      const dkim = flatDkim.find((r) => r.includes("v=DKIM1") || r.includes("k=rsa") || r.includes("p="));
-      if (dkim) {
+  // 3. Resolve In-House DKIM record strictly for selector._domainkey.domain.com
+  try {
+    const dkimTxt = await dns.promises.resolveTxt(`${selector}._domainkey.${domain}`);
+    const flatDkim = dkimTxt.map((r) => r.join(""));
+    const dkim = flatDkim.find((r) => r.includes("v=DKIM1") || r.includes("k=rsa") || r.includes("p="));
+    
+    if (dkim) {
+      // If expectedPublicKey is provided, verify the key content matches
+      if (expectedPublicKey) {
+        const cleanExpected = expectedPublicKey.replace(/[\r\n\s]/g, "");
+        const cleanFound = dkim.replace(/[\r\n\s]/g, "");
+        if (cleanFound.includes(cleanExpected)) {
+          dkimRecord = dkim;
+          dkimSelectorFound = selector;
+        }
+      } else {
         dkimRecord = dkim;
         dkimSelectorFound = selector;
-        break;
       }
-    } catch {
-      // try next selector
     }
+  } catch {
+    // missing or unresolvable
   }
 
   // 4. Resolve MX records
@@ -66,10 +77,10 @@ export async function verifyDomainDns(
     // ignore
   }
 
-  const spfVerified = !!spfRecord;
-  const dmarcVerified = !!dmarcRecord;
+  const spfVerified = Boolean(spfRecord);
+  const dmarcVerified = Boolean(dmarcRecord);
+  const dkimVerified = Boolean(dkimRecord);
   const mxVerified = mxHostList.length > 0;
-  const dkimVerified = !!dkimRecord;
 
   return {
     domain,
@@ -77,6 +88,6 @@ export async function verifyDomainDns(
     dkim: { verified: dkimVerified, record: dkimRecord, selectorFound: dkimSelectorFound },
     dmarc: { verified: dmarcVerified, record: dmarcRecord },
     mx: { verified: mxVerified, records: mxHostList },
-    isFullyConfigured: spfVerified && dkimVerified && dmarcVerified && mxVerified,
+    isFullyConfigured: spfVerified && dkimVerified && dmarcVerified,
   };
 }

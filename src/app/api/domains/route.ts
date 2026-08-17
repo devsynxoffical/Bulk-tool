@@ -78,7 +78,11 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const dnsResult = await verifyDomainDns(domainName, domainRecord.dkimSelector || selector);
+    const dnsResult = await verifyDomainDns(
+      domainName,
+      domainRecord.dkimSelector || selector,
+      domainRecord.dkimPublicKey,
+    );
 
     const updated = await prisma.sendingDomain.update({
       where: { id: domainRecord.id },
