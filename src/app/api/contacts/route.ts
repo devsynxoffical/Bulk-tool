@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
     const parsed = createSchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json(
-        { error: parsed.error.issues[0]?.message || "Invalid contact" },
+        { error: parsed.error.issues[0]?.message || "Invalid contact input" },
         { status: 400 },
       );
     }
@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
     const phone = parsed.data.phone?.trim()
       ? normalizePhone(parsed.data.phone)
       : null;
-    const email = parsed.data.email?.trim() || null;
+    const email = parsed.data.email?.trim() ? parsed.data.email.trim().toLowerCase() : null;
 
     if (phone && phone.length < 8) {
       return NextResponse.json({ error: "Invalid phone number" }, { status: 400 });
@@ -76,58 +76,66 @@ export async function POST(req: NextRequest) {
     if (parsed.data.company?.trim()) customFields.company = parsed.data.company.trim();
     if (parsed.data.city?.trim()) customFields.city = parsed.data.city.trim();
 
+    // 1. Look up existing contact by email or phone
+    const existing = await prisma.contact.findFirst({
+      where: {
+        OR: [
+          ...(email ? [{ email: { equals: email, mode: "insensitive" as const } }] : []),
+          ...(phone ? [{ phone }] : []),
+        ],
+      },
+    });
+
     let contact;
-    if (phone) {
-      const existing = await prisma.contact.findFirst({ where: { phone } });
-      if (existing) {
-        contact = await prisma.contact.update({
-          where: { id: existing.id },
-          data: {
-            name: parsed.data.name || undefined,
-            email: email || undefined,
-            tags: parsed.data.tags || undefined,
-            customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
-          },
-        });
-      } else {
+    if (existing) {
+      contact = await prisma.contact.update({
+        where: { id: existing.id },
+        data: {
+          name: parsed.data.name?.trim() || undefined,
+          phone: phone || undefined,
+          email: email || undefined,
+          tags: parsed.data.tags || undefined,
+          customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
+        },
+      });
+    } else {
+      try {
         contact = await prisma.contact.create({
           data: {
-            phone,
-            name: parsed.data.name || null,
-            email,
+            email: email || null,
+            phone: phone || null,
+            name: parsed.data.name?.trim() || null,
             tags: parsed.data.tags || [],
             customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
           },
         });
-      }
-      return NextResponse.json({ ...contact, contact }, { status: 201 });
-    }
-
-    if (email) {
-      const existing = await prisma.contact.findFirst({ where: { email } });
-      if (existing) {
-        contact = await prisma.contact.update({
-          where: { id: existing.id },
-          data: {
-            name: parsed.data.name || undefined,
-            tags: parsed.data.tags || undefined,
-            customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
+      } catch (createErr: any) {
+        // Fallback for race condition or unique constraint collision
+        const fallback = await prisma.contact.findFirst({
+          where: {
+            OR: [
+              ...(email ? [{ email }] : []),
+              ...(phone ? [{ phone }] : []),
+            ],
           },
         });
-      } else {
-        contact = await prisma.contact.create({
-          data: {
-            email,
-            name: parsed.data.name || null,
-            tags: parsed.data.tags || [],
-            customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
-          },
-        });
+
+        if (fallback) {
+          contact = await prisma.contact.update({
+            where: { id: fallback.id },
+            data: {
+              name: parsed.data.name?.trim() || undefined,
+              tags: parsed.data.tags || undefined,
+              customFields: Object.keys(customFields).length > 0 ? customFields : undefined,
+            },
+          });
+        } else {
+          throw createErr;
+        }
       }
-      return NextResponse.json({ ...contact, contact }, { status: 201 });
     }
 
-    return NextResponse.json({ error: "Phone or email required" }, { status: 400 });
+    return NextResponse.json({ ...contact, contact }, { status: 201 });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to save contact";
     return NextResponse.json({ error: message }, { status: 400 });
