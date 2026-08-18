@@ -36,11 +36,14 @@ export function ComposeClient() {
 
   useEffect(() => {
     fetch("/api/templates")
-      .then((r) => (r.ok ? r.json() : { templates: [] }))
-      .then((data: { templates: TemplateItem[] }) => {
-        if (data && Array.isArray(data.templates)) {
-          setTemplates(data.templates);
-        }
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: any) => {
+        const list = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.templates)
+          ? data.templates
+          : [];
+        setTemplates(list);
       })
       .catch(() => {});
   }, []);
@@ -247,26 +250,31 @@ export function ComposeClient() {
         </div>
 
         {/* Template Selector */}
-        {templates.length > 0 && (
-          <div className="space-y-1.5 border-t border-zinc-100 pt-4">
+        <div className="space-y-1.5 border-t border-zinc-100 pt-4">
+          <div className="flex items-center justify-between">
             <Label className="text-xs font-bold text-zinc-900 flex items-center gap-1.5">
               <FileText className="h-3.5 w-3.5 text-blue-600" />
-              Load Email Template
+              Select Email Template (Optional)
             </Label>
-            <select
-              value={selectedTemplateId}
-              onChange={handleSelectTemplate}
-              className="w-full rounded-md border border-zinc-200 bg-zinc-50/50 px-3 py-2 text-xs text-zinc-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">-- Choose a pre-made Email Template --</option>
-              {templates.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name} ({t.subject})
-                </option>
-              ))}
-            </select>
+            {templates.length === 0 && (
+              <a href="/templates" className="text-[11px] text-blue-600 hover:underline">
+                + Create Templates in Template Manager
+              </a>
+            )}
           </div>
-        )}
+          <select
+            value={selectedTemplateId}
+            onChange={handleSelectTemplate}
+            className="w-full rounded-lg border border-zinc-200 bg-zinc-50/50 px-3 py-2 text-xs text-zinc-800 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+          >
+            <option value="">-- Choose a pre-made Email Template to Autofill --</option>
+            {templates.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name} ({t.subject || "No Subject"})
+              </option>
+            ))}
+          </select>
+        </div>
 
         {/* Subject Line */}
         <div className="space-y-1.5 border-t border-zinc-100 pt-4">
