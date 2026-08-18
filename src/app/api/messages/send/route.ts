@@ -4,9 +4,9 @@ import { requireSession } from "@/lib/api";
 import { sendSingleEmail } from "@/lib/messages/send-single";
 
 const schema = z.object({
-  contactId: z.string().min(1),
-  subject: z.string().min(1),
-  body: z.string().min(1),
+  contactId: z.string().min(1, "Recipient contact ID is required"),
+  subject: z.string().min(1, "Email subject line is required"),
+  body: z.string().min(1, "Email body content is required"),
   templateId: z.string().optional(),
 });
 
@@ -14,10 +14,18 @@ export async function POST(req: NextRequest) {
   const { error } = await requireSession();
   if (error) return error;
 
-  const parsed = schema.safeParse(await req.json());
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON request body" }, { status: 400 });
+  }
+
+  const parsed = schema.safeParse(body);
   if (!parsed.success) {
+    const errorMsg = parsed.error.issues[0]?.message || "Invalid email request parameters";
     return NextResponse.json(
-      { error: "Invalid request", details: parsed.error.flatten() },
+      { error: errorMsg, details: parsed.error.flatten() },
       { status: 400 },
     );
   }
@@ -32,7 +40,8 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json(result, { status: 201 });
   } catch (e) {
-    const message = e instanceof Error ? e.message : "Send failed";
+    const message = e instanceof Error ? e.message : "Failed to send email message";
+    console.error("POST /api/messages/send error:", message);
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }

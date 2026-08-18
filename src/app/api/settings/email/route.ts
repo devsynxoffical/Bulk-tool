@@ -70,6 +70,10 @@ export async function POST(req: NextRequest) {
 
     const { id, password, signature, dailyLimit, isActive, ...rest } = parsed.data;
 
+    if (!id && !password) {
+      return NextResponse.json({ error: "Password is required when connecting a new mailbox" }, { status: 400 });
+    }
+
     const updateData: Record<string, unknown> = {
       ...rest,
       provider: "SMTP",
