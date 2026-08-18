@@ -239,6 +239,31 @@ export function EmailForm() {
     loadData();
   }
 
+  const [diagnosing, setDiagnosing] = useState(false);
+  const [diagReport, setDiagReport] = useState<any>(null);
+
+  async function runDiagnostics() {
+    setDiagnosing(true);
+    setDiagReport(null);
+    try {
+      const res = await fetch("/api/settings/email/diagnose", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          host: host || undefined,
+          username: username || undefined,
+          password: password || undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({ error: "Failed to parse diagnostic response" }));
+      setDiagnosing(false);
+      setDiagReport(data);
+    } catch (e: any) {
+      setDiagnosing(false);
+      setDiagReport({ error: e.message || "Diagnostic request failed" });
+    }
+  }
+
   async function sendTestEmail() {
     setTesting(true);
     setMessage(null);
@@ -248,10 +273,10 @@ export function EmailForm() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ to: testEmailTarget || undefined }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       setTesting(false);
       if (!res.ok) {
-        setMessage({ ok: false, text: `Test failed: ${data.error}` });
+        setMessage({ ok: false, text: `Test failed: ${data.error || "Connection timed out"}` });
       } else {
         setMessage({
           ok: true,
@@ -506,6 +531,114 @@ export function EmailForm() {
                 )}
               </form>
             </CardContent>
+          </Card>
+
+          {/* Deep Network & Port Diagnostics Card */}
+          <Card className="border-blue-200 bg-blue-50/30">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-sm font-bold text-zinc-900 flex items-center gap-1.5">
+                    <Server className="h-4 w-4 text-blue-600" />
+                    Deep Network &amp; SMTP Port Diagnostic Tool
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    Test live TCP connectivity, firewall port access, and TLS handshakes from your cloud server to your mail host.
+                  </CardDescription>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={runDiagnostics}
+                  disabled={diagnosing}
+                  className="bg-blue-600 hover:bg-blue-700 text-xs font-semibold h-8"
+                >
+                  {diagnosing ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <RefreshCw className="h-3.5 w-3.5 mr-1.5" />}
+                  {diagnosing ? "Running Diagnostic Test..." : "Run Live Port & SMTP Diagnostics"}
+                </Button>
+              </div>
+            </CardHeader>
+            {diagReport && (
+              <CardContent className="space-y-4 pt-1">
+                {/* DNS Section */}
+                <div className="rounded-lg border border-zinc-200 bg-white p-3 space-y-1 text-xs">
+                  <p className="font-bold text-zinc-900 flex items-center justify-between">
+                    <span>1. DNS Resolution for {diagReport.testedHost}:</span>
+                    {diagReport.dns?.resolvedIps?.length > 0 ? (
+                      <span className="text-emerald-700 font-semibold flex items-center gap-1">
+                        <Check className="h-3.5 w-3.5" /> Resolved to: {diagReport.dns.resolvedIps.join(", ")}
+                      </span>
+                    ) : (
+                      <span className="text-rose-700 font-semibold">❌ DNS Resolution Failed</span>
+                    )}
+                  </p>
+                </div>
+
+                {/* Port Tests Table */}
+                <div className="rounded-lg border border-zinc-200 bg-white overflow-hidden text-xs">
+                  <div className="bg-zinc-100/80 px-3 py-2 font-bold text-zinc-800 border-b border-zinc-200">
+                    2. TCP Port &amp; Firewall Status (from Cloud Server):
+                  </div>
+                  <div className="divide-y divide-zinc-100">
+                    {diagReport.portResults?.map((p: any, idx: number) => (
+                      <div key={idx} className="flex items-center justify-between p-3">
+                        <span className="font-mono text-zinc-800">
+                          {p.host}:{p.port} {p.port === 465 ? "(SSL)" : "(STARTTLS)"}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] text-zinc-500">{p.latencyMs}ms</span>
+                          {p.open ? (
+                            <span className="inline-flex items-center gap-1 rounded bg-emerald-100 px-2 py-0.5 font-bold text-emerald-800 text-[11px]">
+                              <Check className="h-3 w-3" /> PORT OPEN
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded bg-rose-100 px-2 py-0.5 font-bold text-rose-800 text-[11px]">
+                              BLOCKED / TIMEOUT
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Recommendation */}
+                {diagReport.recommendation && (
+                  <div className="rounded-lg border border-blue-200 bg-blue-100/60 p-3 text-xs text-blue-950 font-medium space-y-1">
+                    <p className="font-bold text-blue-900">💡 Diagnostic Recommendation:</p>
+                    <p>{diagReport.recommendation}</p>
+                    <div className="flex gap-2 pt-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setHost("s4549.lon1.stableserver.net");
+                          setPort(465);
+                          setSecure(true);
+                        }}
+                        className="h-7 text-xs bg-white"
+                      >
+                        Auto-fill Host: s4549.lon1.stableserver.net (Port 465 SSL)
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setHost("mail.devsynx.com");
+                          setPort(465);
+                          setSecure(true);
+                        }}
+                        className="h-7 text-xs bg-white"
+                      >
+                        Auto-fill Host: mail.devsynx.com (Port 465 SSL)
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            )}
           </Card>
         </div>
       )}
