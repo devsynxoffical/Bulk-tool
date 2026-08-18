@@ -95,9 +95,10 @@ export function ComposeClient() {
           phone: phone.trim() || undefined,
         }),
       });
-      const contactData = await contactRes.json();
-      if (!contactRes.ok || !contactData.contact?.id) {
-        throw new Error(contactData.error || "Failed to resolve contact");
+      const contactData = await contactRes.json().catch(() => ({}));
+      const targetContactId = contactData.contact?.id || contactData.id;
+      if (!contactRes.ok || !targetContactId) {
+        throw new Error(contactData.error || "Failed to resolve prospect contact");
       }
 
       // 2. Dispatch email message via multi-inbox rotation & DKIM
@@ -105,14 +106,14 @@ export function ComposeClient() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          contactId: contactData.contact.id,
+          contactId: targetContactId,
           subject: subject.trim(),
           body: body.trim(),
           templateId: selectedTemplateId || undefined,
         }),
       });
 
-      const sendData = await sendRes.json();
+      const sendData = await sendRes.json().catch(() => ({}));
       setSending(false);
 
       if (!sendRes.ok) {

@@ -100,7 +100,7 @@ export async function POST(req: NextRequest) {
           },
         });
       }
-      return NextResponse.json({ contact }, { status: 201 });
+      return NextResponse.json({ ...contact, contact }, { status: 201 });
     }
 
     if (email) {
@@ -124,7 +124,7 @@ export async function POST(req: NextRequest) {
           },
         });
       }
-      return NextResponse.json({ contact }, { status: 201 });
+      return NextResponse.json({ ...contact, contact }, { status: 201 });
     }
 
     return NextResponse.json({ error: "Phone or email required" }, { status: 400 });
