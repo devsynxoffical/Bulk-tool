@@ -5,6 +5,7 @@ import tls from "tls";
 import nodemailer from "nodemailer";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/api";
+import { checkSmtpRelayHealth, isSmtpRelayEnabled } from "@/lib/email/smtp-relay-client";
 
 type PortCheckResult = {
   host: string;
@@ -171,9 +172,20 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const smtpRelayEnabled = isSmtpRelayEnabled();
+    const smtpRelay = smtpRelayEnabled ? await checkSmtpRelayHealth() : null;
+
+    const relayNote = smtpRelayEnabled
+      ? smtpRelay?.ok
+        ? "Railway uses cPanel SMTP relay for sending — direct port tests here may fail even when mail works."
+        : "SMTP relay is configured but unreachable — fix relay on cPanel or SMTP_RELAY_URL on Railway."
+      : null;
+
     return NextResponse.json({
       success: true,
       testedHost: hostToCheck,
+      smtpRelayEnabled,
+      smtpRelay,
       dns: {
         host: hostToCheck,
         resolvedIps,
@@ -182,9 +194,12 @@ export async function POST(req: NextRequest) {
       portResults,
       authResults,
       recommendation:
-        authResults.find((a) => a.success)
+        relayNote ||
+        (authResults.find((a) => a.success)
           ? `Use Host: '${authResults.find((a) => a.success)?.host}' on Port: ${authResults.find((a) => a.success)?.port}`
-          : "Check the firewall or use the cPanel server hostname (s4549.lon1.stableserver.net).",
+          : smtpRelayEnabled
+            ? "Deploy the cPanel SMTP relay (npm run smtp-relay) and set SMTP_RELAY_URL on Railway."
+            : "Check the firewall or use the cPanel server hostname (s4549.lon1.stableserver.net)."),
     });
   } catch (e: any) {
     return NextResponse.json(

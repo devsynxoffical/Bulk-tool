@@ -76,6 +76,8 @@ type CapacityStats = {
   bounceRate?: number;
   throttled?: boolean;
   workerConcurrency?: number;
+  smtpRelayEnabled?: boolean;
+  smtpRelay?: { ok: boolean; url?: string; error?: string } | null;
 };
 
 export function MailboxManager() {
@@ -338,6 +340,16 @@ export function MailboxManager() {
               Target: {RECOMMENDED_INBOX_COUNT} mailboxes × 250/day · {capacity.workerConcurrency ?? 4} parallel workers ·
               ~{capacity.avgInboxCooldownSec ?? 345}s cooldown/inbox · auto bounce suppression
               {capacity.throttled ? " · ⚠️ throttled (high bounce rate)" : ""}
+              {capacity.smtpRelayEnabled && (
+                <>
+                  {" · "}
+                  {capacity.smtpRelay?.ok ? (
+                    <span className="text-emerald-700">SMTP via cPanel relay ✓</span>
+                  ) : (
+                    <span className="text-rose-700">cPanel relay unreachable — check SMTP_RELAY_URL</span>
+                  )}
+                </>
+              )}
             </p>
           </CardContent>
         </Card>

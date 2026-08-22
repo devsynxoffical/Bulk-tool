@@ -1,4 +1,3 @@
-import nodemailer from "nodemailer";
 import { promises as fs } from "fs";
 import path from "path";
 import { prisma } from "@/lib/prisma";
@@ -125,62 +124,62 @@ export async function sendEmailMessage(params: {
 
   let resultMessageId = `msg_${Date.now()}`;
 
-  // 4. Send via In-House Direct SMTP Engine with 2048-bit RSA DKIM Signing
+  // 4. Send via cPanel relay (Railway) or direct SMTP (local/VPS)
   if (!account.host || !account.username || !account.password) {
     throw new Error("SMTP server settings (Host, Username, Password) are incomplete. Please check Settings.");
   }
-    // Check if domain has cryptographic DKIM key pair configured
-    const senderDomainName = account.fromEmail.split("@").pop()?.toLowerCase();
-    let dkimConfig: { domainName: string; keySelector: string; privateKey: string } | undefined = undefined;
 
-    if (senderDomainName) {
-      const domainRecord = await prisma.sendingDomain.findUnique({
-        where: { domainName: senderDomainName },
-      });
-      if (domainRecord && domainRecord.dkimPrivateKey) {
-        dkimConfig = {
-          domainName: senderDomainName,
-          keySelector: domainRecord.dkimSelector || "dkim",
-          privateKey: domainRecord.dkimPrivateKey,
-        };
-      }
+  const senderDomainName = account.fromEmail.split("@").pop()?.toLowerCase();
+  let dkimConfig: { domainName: string; keySelector: string; privateKey: string } | undefined;
+
+  if (senderDomainName) {
+    const domainRecord = await prisma.sendingDomain.findUnique({
+      where: { domainName: senderDomainName },
+    });
+    if (domainRecord?.dkimPrivateKey) {
+      dkimConfig = {
+        domainName: senderDomainName,
+        keySelector: domainRecord.dkimSelector || "dkim",
+        privateKey: domainRecord.dkimPrivateKey,
+      };
     }
+  }
 
-    const isPort465 = Number(account.port) === 465;
-    const isSecure = isPort465 ? true : Boolean(account.secure);
+  const isPort465 = Number(account.port) === 465;
+  const isSecure = isPort465 ? true : Boolean(account.secure);
 
-    const transporter = nodemailer.createTransport({
+  const deliveryPayload = {
+    to: recipient,
+    subject: params.subject,
+    html: finalHtml,
+    text: params.text || finalHtml.replace(/<[^>]+>/g, " "),
+    from: account.fromName
+      ? `"${account.fromName}" <${account.fromEmail}>`
+      : account.fromEmail,
+    listUnsubscribe: unsubUrl,
+    smtp: {
       host: account.host,
       port: account.port || 587,
       secure: isSecure,
-      auth: {
-        user: account.username,
-        pass: account.password,
-      },
-      tls: {
-        rejectUnauthorized: false,
-      },
-      connectionTimeout: 10000,
-      greetingTimeout: 8000,
-      socketTimeout: 12000,
-      dkim: dkimConfig,
-    } as nodemailer.TransportOptions);
+      username: account.username,
+      password: account.password,
+    },
+    dkim: dkimConfig,
+    attachments: preparedAttachments
+      .filter((a) => a.content)
+      .map((a) => ({ filename: a.filename, content: a.content! })),
+  };
 
-    const info = await transporter.sendMail({
-      from: account.fromName
-        ? `"${account.fromName}" <${account.fromEmail}>`
-        : account.fromEmail,
-      to: recipient,
-      subject: params.subject,
-      html: finalHtml,
-      text: params.text || finalHtml.replace(/<[^>]+>/g, " "),
-      headers: {
-        "List-Unsubscribe": `<${unsubUrl}>`,
-      },
-      attachments: preparedAttachments.length > 0 ? preparedAttachments : undefined,
-    });
+  const { isSmtpRelayEnabled, sendViaSmtpRelay } = await import("./smtp-relay-client");
+  const { deliverViaSmtp } = await import("./deliver-smtp");
 
-    resultMessageId = info.messageId || resultMessageId;
+  if (isSmtpRelayEnabled()) {
+    const relayResult = await sendViaSmtpRelay(deliveryPayload);
+    resultMessageId = relayResult.messageId;
+  } else {
+    const directResult = await deliverViaSmtp(deliveryPayload);
+    resultMessageId = directResult.messageId;
+  }
 
   // Update sending statistics on the account and linked domain
   if (account.id !== "draft-test") {

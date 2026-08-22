@@ -14,6 +14,7 @@
     "start:all": "bash scripts/start-all.sh",
     "lint": "eslint",
     "worker": "tsx scripts/worker.ts",
+    "smtp-relay": "tsx smtp-relay/server.ts",
     "bounce:poll": "tsx -e \"import { pollBounceMailboxOnce } from './src/lib/email/bounce-poller.ts'; pollBounceMailboxOnce().then(n => console.log('Processed', n))\"",
     "scraper": "cd Gmap-scrapper && .venv/bin/python server.py",
     "db:push": "prisma db push",
