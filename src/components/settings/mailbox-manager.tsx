@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Loader2,
   Mail,
@@ -77,6 +79,8 @@ type CapacityStats = {
 };
 
 export function MailboxManager() {
+  const searchParams = useSearchParams();
+  const presetDomain = searchParams.get("domain")?.trim().toLowerCase() || "";
   const [accounts, setAccounts] = useState<EmailAccount[]>([]);
   const [domains, setDomains] = useState<DomainOption[]>([]);
   const [capacity, setCapacity] = useState<CapacityStats | null>(null);
@@ -126,6 +130,20 @@ export function MailboxManager() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (!presetDomain) return;
+    setHost(`mail.${presetDomain}`);
+    const local = `info@${presetDomain}`;
+    setFromEmail(local);
+    setUsername(local);
+  }, [presetDomain]);
+
+  useEffect(() => {
+    if (!presetDomain || domains.length === 0) return;
+    const match = domains.find((d) => d.domainName === presetDomain);
+    if (match) setDomainId(match.id);
+  }, [presetDomain, domains]);
 
   function handlePortChange(nextPort: number) {
     setPort(nextPort);

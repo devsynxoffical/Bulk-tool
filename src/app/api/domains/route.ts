@@ -53,6 +53,15 @@ export async function GET() {
           });
         }
 
+        const mailboxCount = await prisma.emailAccount.count({
+          where: {
+            OR: [
+              { domainId: d.id },
+              { fromEmail: { endsWith: `@${d.domainName}`, mode: "insensitive" } },
+            ],
+          },
+        });
+
         return {
           id: d.id,
           domainName: d.domainName,
@@ -67,7 +76,7 @@ export async function GET() {
           isVerified: dnsResult.isFullyConfigured,
           dailyLimit: d.dailyLimit,
           sentToday: d.sentToday,
-          mailboxCount: d._count.mailboxes,
+          mailboxCount,
           lastCheckedAt: new Date().toISOString(),
         };
       }),

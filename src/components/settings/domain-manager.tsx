@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import {
   Globe,
@@ -10,6 +11,7 @@ import {
   ChevronUp,
   Trash2,
   ShieldCheck,
+  Inbox,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -195,8 +197,14 @@ export function DomainManager() {
                         </p>
                       </div>
                     </div>
-                    <div className="flex gap-2">
-                      <Button variant="outline" size="sm" onClick={() => reverify(d.domainName)} disabled={checkingDomain}>
+                        <div className="flex gap-2 flex-wrap">
+                          <Link href={`/mailboxes?domain=${encodeURIComponent(d.domainName)}`}>
+                            <Button size="sm" className="h-8 text-xs bg-blue-600 hover:bg-blue-700">
+                              <Inbox className="h-3.5 w-3.5 mr-1" />
+                              Add mailbox
+                            </Button>
+                          </Link>
+                          <Button variant="outline" size="sm" onClick={() => reverify(d.domainName)} disabled={checkingDomain}>
                         <RefreshCw className={`h-3.5 w-3.5 mr-1 ${checkingDomain ? "animate-spin" : ""}`} />
                         Re-verify
                       </Button>
