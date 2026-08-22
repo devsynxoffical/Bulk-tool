@@ -43,7 +43,6 @@ let isEnsured = false;
  */
 export async function ensureDbSchema() {
   if (isEnsured) return;
-  isEnsured = true;
 
   try {
     await prisma.$executeRawUnsafe(`
@@ -133,6 +132,8 @@ export async function ensureDbSchema() {
     await prisma.$executeRawUnsafe(`
       ALTER TABLE "Contact" ADD COLUMN IF NOT EXISTS "emailOptedOut" BOOLEAN NOT NULL DEFAULT false;
     `);
+
+    isEnsured = true;
   } catch (err) {
     console.error("Auto-schema sync warning:", err);
   }

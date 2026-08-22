@@ -16,7 +16,9 @@ fi
 
 # Run database migrations and seeding
 echo "[1/4] Running Prisma database setup..."
-npx prisma db push || echo "Warning: prisma db push failed or pending"
+# --accept-data-loss: drops legacy WhatsApp tables removed from schema (email-only app)
+npx prisma db push --accept-data-loss
+npx tsx scripts/ensure-schema.ts
 npx prisma db seed || echo "Warning: prisma db seed warning"
 
 # Start Python Gmap Scraper background service

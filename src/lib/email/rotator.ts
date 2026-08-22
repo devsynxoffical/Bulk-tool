@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { prisma, ensureDbSchema } from "@/lib/prisma";
 import {
   extractDomainFromEmail,
   MIN_INBOX_INTERVAL_SEC,
@@ -50,6 +50,8 @@ function inboxBounceRateOk(inbox: InboxWithDomain): boolean {
 }
 
 export async function checkDailyReset() {
+  await ensureDbSchema();
+
   const today = new Date();
   const startOfDay = new Date(
     today.getFullYear(),
