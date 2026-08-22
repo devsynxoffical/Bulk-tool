@@ -2,7 +2,20 @@ import { Queue, Worker, type Job } from "bullmq";
 import IORedis from "ioredis";
 import { prisma } from "@/lib/prisma";
 import { renderTemplateString, sendEmailMessage } from "@/lib/email/client";
-import { getNextSendingInbox } from "@/lib/email/rotator";
+import {
+  isLikelySmtpBounce,
+  recordBounce,
+} from "@/lib/email/bounce-handler";
+import {
+  computeSpreadDelayMs,
+  getThrottleDelayMs,
+} from "@/lib/email/throttle";
+import { WORKER_CONCURRENCY } from "@/lib/email/constants";
+import {
+  checkDailyReset,
+  getMsUntilInboxAvailable,
+  getNextSendingInbox,
+} from "@/lib/email/rotator";
 
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 
@@ -30,8 +43,8 @@ export function getCampaignQueue() {
     campaignQueue = new Queue("campaign-messages", {
       connection: getConnection(),
       defaultJobOptions: {
-        attempts: 3,
-        backoff: { type: "exponential", delay: 2000 },
+        attempts: 5,
+        backoff: { type: "exponential", delay: 5000 },
         removeOnComplete: 1000,
         removeOnFail: 5000,
       },
@@ -65,6 +78,13 @@ function contactVars(contact: {
 }
 
 export async function processCampaignJob(job: Job<CampaignJobData>) {
+  await checkDailyReset();
+
+  const throttleMs = await getThrottleDelayMs();
+  if (throttleMs > 0) {
+    await new Promise((r) => setTimeout(r, throttleMs));
+  }
+
   const { campaignId, recipientId } = job.data;
 
   const recipient = await prisma.campaignRecipient.findUnique({
@@ -101,6 +121,29 @@ export async function processCampaignJob(job: Job<CampaignJobData>) {
     return;
   }
 
+  if (recipient.contact.email) {
+    const suppressed = await prisma.suppressionList.findUnique({
+      where: { email: recipient.contact.email.toLowerCase() },
+    });
+    if (suppressed) {
+      await prisma.campaignRecipient.update({
+        where: { id: recipientId },
+        data: {
+          status: "SKIPPED",
+          errorMessage: `Suppressed (${suppressed.reason})`,
+        },
+      });
+      return;
+    }
+  }
+
+  const sendingInbox = await getNextSendingInbox();
+  if (!sendingInbox) {
+    const waitMs = await getMsUntilInboxAvailable();
+    await job.moveToDelayed(Date.now() + waitMs, job.token);
+    return;
+  }
+
   try {
     await prisma.campaignRecipient.update({
       where: { id: recipientId },
@@ -116,16 +159,13 @@ export async function processCampaignJob(job: Job<CampaignJobData>) {
       vars,
     );
 
-    // Get healthiest sending mailbox via round-robin
-    const sendingInbox = await getNextSendingInbox();
-
     const result = await sendEmailMessage({
       to: recipient.contact.email,
       subject,
       html,
       pdfUrl: recipient.campaign.template.pdfUrl || undefined,
       trackingId: recipientId,
-      account: sendingInbox || undefined,
+      account: sendingInbox,
     });
 
     const conversation = await prisma.conversation.upsert({
@@ -183,10 +223,26 @@ export async function processCampaignJob(job: Job<CampaignJobData>) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Send failed";
-    await prisma.campaignRecipient.update({
-      where: { id: recipientId },
-      data: { status: "FAILED", errorMessage: message },
-    });
+
+    if (recipient.contact.email && isLikelySmtpBounce(message)) {
+      await recordBounce({
+        email: recipient.contact.email,
+        inboxId: sendingInbox.id,
+        reason: "HARD_BOUNCE",
+        raw: message,
+        contactId: recipient.contactId,
+      });
+      await prisma.campaignRecipient.update({
+        where: { id: recipientId },
+        data: { status: "FAILED", errorMessage: `Bounced: ${message}` },
+      });
+    } else {
+      await prisma.campaignRecipient.update({
+        where: { id: recipientId },
+        data: { status: "FAILED", errorMessage: message },
+      });
+    }
+
     await prisma.campaign.update({
       where: { id: campaignId },
       data: { failedCount: { increment: 1 } },
@@ -226,14 +282,13 @@ export async function enqueueCampaign(campaignId: string) {
   if (!campaign) throw new Error("Campaign not found");
 
   const queue = getCampaignQueue();
-  // Staggered humanized delay interval: ~3 to 8 seconds per message
-  const delayStepMs = Math.max(2000, 5000 / Math.max(1, campaign.rateLimitPerSecond));
+  const total = campaign.recipients.length;
 
   const jobs = campaign.recipients.map((r, index) => ({
     name: "send",
     data: { campaignId, recipientId: r.id } satisfies CampaignJobData,
     opts: {
-      delay: index * delayStepMs,
+      delay: computeSpreadDelayMs(index, total, WORKER_CONCURRENCY),
       jobId: `${campaignId}-${r.id}`,
     },
   }));
@@ -243,6 +298,30 @@ export async function enqueueCampaign(campaignId: string) {
   }
 
   return jobs.length;
+}
+
+/** Launch campaigns whose scheduledAt has passed. */
+export async function processScheduledCampaigns() {
+  const due = await prisma.campaign.findMany({
+    where: {
+      status: "SCHEDULED",
+      scheduledAt: { lte: new Date() },
+    },
+  });
+
+  for (const campaign of due) {
+    try {
+      startCampaignWorker();
+      await prisma.campaign.update({
+        where: { id: campaign.id },
+        data: { status: "RUNNING", startedAt: new Date() },
+      });
+      await enqueueCampaign(campaign.id);
+      console.log(`Scheduled campaign launched: ${campaign.name}`);
+    } catch (e) {
+      console.error(`Failed to launch scheduled campaign ${campaign.id}:`, e);
+    }
+  }
 }
 
 let workerStarted = false;
@@ -256,7 +335,7 @@ export function startCampaignWorker() {
     async (job) => processCampaignJob(job),
     {
       connection: getConnection(),
-      concurrency: 3,
+      concurrency: WORKER_CONCURRENCY,
     },
   );
 
@@ -264,6 +343,8 @@ export function startCampaignWorker() {
     console.error(`Campaign job ${job?.id} failed:`, err.message);
   });
 
-  console.log("Campaign worker started");
+  console.log(
+    `Campaign worker started (concurrency: ${WORKER_CONCURRENCY}, 5k/day spread pacing)`,
+  );
   return worker;
 }

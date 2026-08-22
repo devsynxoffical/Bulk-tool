@@ -46,7 +46,7 @@ export function CampaignControls({
       <div className="flex gap-2">
         {["DRAFT", "PAUSED", "SCHEDULED"].includes(status) ? (
           <Button onClick={launch} disabled={loading}>
-            {loading ? "Working…" : "Launch campaign"}
+            {loading ? "Working…" : status === "SCHEDULED" ? "Launch now" : "Launch campaign"}
           </Button>
         ) : null}
         {status === "RUNNING" ? (

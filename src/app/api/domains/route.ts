@@ -4,6 +4,10 @@ import { prisma, ensureDbSchema } from "@/lib/prisma";
 import { requireSession } from "@/lib/api";
 import { generateDkimKeyPair } from "@/lib/email/dkim";
 import { verifyDomainDns } from "@/lib/email/dns-checker";
+import {
+  buildSpfRecordHint,
+  DEFAULT_DOMAIN_DAILY_LIMIT,
+} from "@/lib/email/constants";
 
 const schema = z.object({
   domainName: z.string().min(3),
@@ -17,6 +21,9 @@ export async function GET() {
     await ensureDbSchema();
     const domains = await prisma.sendingDomain.findMany({
       orderBy: { createdAt: "desc" },
+      include: {
+        _count: { select: { mailboxes: true } },
+      },
     });
 
     // Re-verify live DNS on fetch to update stale DB records
@@ -51,11 +58,16 @@ export async function GET() {
           domainName: d.domainName,
           dkimSelector: selector,
           dkimPublicKey: d.dkimPublicKey || "",
+          spfRecordHint:
+            d.spfRecordHint || buildSpfRecordHint(d.domainName),
           spfVerified: dnsResult.spf.verified,
           dkimVerified: dnsResult.dkim.verified,
           dmarcVerified: dnsResult.dmarc.verified,
           mxVerified: dnsResult.mx.verified,
           isVerified: dnsResult.isFullyConfigured,
+          dailyLimit: d.dailyLimit,
+          sentToday: d.sentToday,
+          mailboxCount: d._count.mailboxes,
           lastCheckedAt: new Date().toISOString(),
         };
       }),
@@ -94,6 +106,8 @@ export async function POST(req: NextRequest) {
       where: { domainName },
     });
 
+    const spfHint = buildSpfRecordHint(domainName);
+
     if (!domainRecord || !domainRecord.dkimPrivateKey) {
       const keyPair = generateDkimKeyPair(domainName, selector);
       domainRecord = await prisma.sendingDomain.upsert({
@@ -103,11 +117,14 @@ export async function POST(req: NextRequest) {
           dkimPrivateKey: keyPair.privateKey,
           dkimPublicKey: keyPair.publicKey,
           dkimSelector: selector,
+          spfRecordHint: spfHint,
+          dailyLimit: DEFAULT_DOMAIN_DAILY_LIMIT,
         },
         update: {
           dkimPrivateKey: keyPair.privateKey,
           dkimPublicKey: keyPair.publicKey,
           dkimSelector: selector,
+          spfRecordHint: spfHint,
         },
       });
     }

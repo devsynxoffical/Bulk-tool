@@ -182,17 +182,26 @@ export async function sendEmailMessage(params: {
 
     resultMessageId = info.messageId || resultMessageId;
 
-  // Update sending statistics on the account
-  try {
-    await prisma.emailAccount.update({
-      where: { id: account.id },
-      data: {
-        sentToday: { increment: 1 },
-        lastSentAt: new Date(),
-      },
-    });
-  } catch {
-    // ignore non-critical stats update error
+  // Update sending statistics on the account and linked domain
+  if (account.id !== "draft-test") {
+    try {
+      const senderDomainName = account.fromEmail.split("@").pop()?.toLowerCase();
+      let domainId: string | null =
+        (account as { domainId?: string | null }).domainId ?? null;
+
+      if (!domainId && senderDomainName) {
+        const domainRecord = await prisma.sendingDomain.findUnique({
+          where: { domainName: senderDomainName },
+          select: { id: true },
+        });
+        domainId = domainRecord?.id ?? null;
+      }
+
+      const { recordInboxSend } = await import("@/lib/email/rotator");
+      await recordInboxSend(account.id, domainId);
+    } catch {
+      // ignore non-critical stats update error
+    }
   }
 
   return { messageId: resultMessageId };

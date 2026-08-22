@@ -1,40 +1,187 @@
 import { prisma } from "@/lib/prisma";
+import {
+  extractDomainFromEmail,
+  MIN_INBOX_INTERVAL_SEC,
+  SENDING_DAY_SECONDS,
+  BOUNCE_RATE_PAUSE_THRESHOLD,
+} from "./constants";
+import { getEffectiveDailyLimit } from "./warmup";
 
-export type EmailAccountRecord = Awaited<ReturnType<typeof prisma.emailAccount.findFirst>>;
+export type EmailAccountRecord = Awaited<
+  ReturnType<typeof prisma.emailAccount.findFirst>
+>;
+
+type InboxWithDomain = Awaited<
+  ReturnType<typeof prisma.emailAccount.findMany>
+>[number] & {
+  domain?: {
+    id: string;
+    domainName: string;
+    dailyLimit: number;
+    sentToday: number;
+    isVerified: boolean;
+  } | null;
+};
+
+/** Cooldown ms for an inbox — spreads its daily cap evenly over 24 hours. */
+export function getInboxCooldownMs(inbox: {
+  dailyLimit: number;
+  warmupEnabled: boolean;
+  warmupStartedAt?: Date | null;
+  createdAt: Date;
+}): number {
+  const cap = getEffectiveDailyLimit(inbox);
+  const evenSpreadSec = SENDING_DAY_SECONDS / Math.max(cap, 1);
+  const cooldownSec = Math.max(MIN_INBOX_INTERVAL_SEC, evenSpreadSec * 0.9);
+  return Math.floor(cooldownSec * 1000);
+}
+
+export function inboxCooldownReady(
+  inbox: { lastSentAt: Date | null } & Parameters<typeof getInboxCooldownMs>[0],
+  now = Date.now(),
+): boolean {
+  if (!inbox.lastSentAt) return true;
+  return now - inbox.lastSentAt.getTime() >= getInboxCooldownMs(inbox);
+}
+
+function inboxBounceRateOk(inbox: InboxWithDomain): boolean {
+  if (inbox.sentToday < 10) return true;
+  return inbox.bounceCount / inbox.sentToday < BOUNCE_RATE_PAUSE_THRESHOLD;
+}
+
+export async function checkDailyReset() {
+  const today = new Date();
+  const startOfDay = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate(),
+  );
+
+  await prisma.emailAccount.updateMany({
+    where: {
+      sentToday: { gt: 0 },
+      OR: [{ lastSentAt: null }, { lastSentAt: { lt: startOfDay } }],
+    },
+    data: { sentToday: 0, bounceCount: 0 },
+  });
+
+  await prisma.sendingDomain.updateMany({
+    where: {
+      sentToday: { gt: 0 },
+      OR: [{ lastSentAt: null }, { lastSentAt: { lt: startOfDay } }],
+    },
+    data: { sentToday: 0 },
+  });
+}
+
+function inboxHasCapacity(inbox: InboxWithDomain): boolean {
+  const cap = getEffectiveDailyLimit({
+    dailyLimit: inbox.dailyLimit,
+    warmupEnabled: inbox.warmupEnabled,
+    warmupStartedAt: inbox.warmupStartedAt,
+    createdAt: inbox.createdAt,
+  });
+  return inbox.sentToday < cap;
+}
+
+function domainHasCapacity(domain: InboxWithDomain["domain"]): boolean {
+  if (!domain) return true;
+  return domain.sentToday < domain.dailyLimit;
+}
+
+function rankInboxes(inboxes: InboxWithDomain[]): InboxWithDomain[] {
+  const byDomain = new Map<string, InboxWithDomain[]>();
+  for (const inbox of inboxes) {
+    const key =
+      inbox.domain?.id ||
+      extractDomainFromEmail(inbox.fromEmail) ||
+      "unlinked";
+    const list = byDomain.get(key) || [];
+    list.push(inbox);
+    byDomain.set(key, list);
+  }
+
+  let bestDomainKey: string | null = null;
+  let bestDomainScore = Infinity;
+
+  for (const [key, domainInboxes] of byDomain) {
+    const domain = domainInboxes[0]?.domain;
+    const domainLimit = domain?.dailyLimit ?? Infinity;
+    const domainSent = domain?.sentToday ?? 0;
+    const utilization = domainSent / Math.max(domainLimit, 1);
+    if (utilization < bestDomainScore) {
+      bestDomainScore = utilization;
+      bestDomainKey = key;
+    }
+  }
+
+  const pool = bestDomainKey ? byDomain.get(bestDomainKey)! : inboxes;
+  return [...pool].sort((a, b) => a.sentToday - b.sentToday);
+}
 
 /**
- * Returns the best active sending inbox using weighted round-robin.
- * Filters for active inboxes with sentToday < dailyLimit and healthScore > 30.
+ * Domain-first round-robin with per-inbox cooldown and bounce-rate filtering.
  */
 export async function getNextSendingInbox(): Promise<EmailAccountRecord> {
+  await checkDailyReset();
+
   const inboxes = await prisma.emailAccount.findMany({
     where: {
       isActive: true,
       healthScore: { gte: 30 },
     },
-    orderBy: [
-      { sentToday: "asc" },
-      { lastSentAt: "asc" },
-    ],
+    include: {
+      domain: {
+        select: {
+          id: true,
+          domainName: true,
+          dailyLimit: true,
+          sentToday: true,
+          isVerified: true,
+        },
+      },
+    },
   });
 
   if (inboxes.length === 0) return null;
 
-  // Find the first inbox with capacity left today
-  const available = inboxes.find((i) => i.sentToday < i.dailyLimit);
+  const eligible = inboxes.filter(
+    (inbox) =>
+      inboxHasCapacity(inbox) &&
+      domainHasCapacity(inbox.domain) &&
+      inboxBounceRateOk(inbox) &&
+      inboxCooldownReady(inbox),
+  );
 
-  if (!available) {
-    // If all inboxes have reached daily limit, return the least-sent one as fallback
-    return inboxes[0];
-  }
+  if (eligible.length === 0) return null;
 
-  return available;
+  return rankInboxes(eligible)[0];
 }
 
-/**
- * Increments sent count for an inbox and updates lastSentAt timestamp.
- */
-export async function recordInboxSend(inboxId: string) {
+/** Milliseconds until any inbox becomes ready (for job retry delay). */
+export async function getMsUntilInboxAvailable(): Promise<number> {
+  await checkDailyReset();
+
+  const inboxes = await prisma.emailAccount.findMany({
+    where: { isActive: true, healthScore: { gte: 30 } },
+  });
+
+  const now = Date.now();
+  let minWait = 60_000;
+
+  for (const inbox of inboxes) {
+    if (!inboxHasCapacity(inbox) || !inboxBounceRateOk(inbox)) continue;
+    if (!inbox.lastSentAt) return 0;
+    const readyAt = inbox.lastSentAt.getTime() + getInboxCooldownMs(inbox);
+    const wait = readyAt - now;
+    if (wait <= 0) return 0;
+    minWait = Math.min(minWait, wait);
+  }
+
+  return Math.max(minWait, 5000);
+}
+
+export async function recordInboxSend(inboxId: string, domainId?: string | null) {
   try {
     await prisma.emailAccount.update({
       where: { id: inboxId },
@@ -43,36 +190,80 @@ export async function recordInboxSend(inboxId: string) {
         lastSentAt: new Date(),
       },
     });
-  } catch (e) {
-    // Ignore non-fatal stats update errors
+
+    if (domainId) {
+      await prisma.sendingDomain.update({
+        where: { id: domainId },
+        data: {
+          sentToday: { increment: 1 },
+          lastSentAt: new Date(),
+        },
+      });
+    }
+  } catch {
+    // Non-fatal
   }
 }
 
-/**
- * Resets sentToday counter for all inboxes if the date has rolled over to a new day.
- */
-export async function checkDailyReset() {
-  const today = new Date();
-  const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+export async function getSendingCapacityStats() {
+  await checkDailyReset();
 
-  const stale = await prisma.emailAccount.findFirst({
-    where: {
-      sentToday: { gt: 0 },
-      lastSentAt: { lt: startOfDay },
-    },
-  });
+  const [inboxes, domains] = await Promise.all([
+    prisma.emailAccount.findMany({
+      where: { isActive: true },
+      include: { domain: true },
+    }),
+    prisma.sendingDomain.findMany({ orderBy: { domainName: "asc" } }),
+  ]);
 
-  if (stale) {
-    await prisma.emailAccount.updateMany({
-      data: { sentToday: 0 },
+  let inboxCapacityToday = 0;
+  let inboxSentToday = 0;
+
+  for (const inbox of inboxes) {
+    inboxCapacityToday += getEffectiveDailyLimit({
+      dailyLimit: inbox.dailyLimit,
+      warmupEnabled: inbox.warmupEnabled,
+      warmupStartedAt: inbox.warmupStartedAt,
+      createdAt: inbox.createdAt,
     });
+    inboxSentToday += inbox.sentToday;
   }
-}
 
-/**
- * Generates a humanized randomized sending delay in milliseconds (default 15-60s)
- */
-export function getRandomSendDelayMs(minSec = 15, maxSec = 60): number {
-  const seconds = Math.floor(Math.random() * (maxSec - minSec + 1)) + minSec;
-  return seconds * 1000;
+  let domainCapacityToday = 0;
+  let domainSentToday = 0;
+  for (const domain of domains) {
+    domainCapacityToday += domain.dailyLimit;
+    domainSentToday += domain.sentToday;
+  }
+
+  const avgCooldownSec =
+    inboxes.length > 0
+      ? inboxes.reduce((sum, i) => sum + getInboxCooldownMs(i) / 1000, 0) /
+        inboxes.length
+      : 0;
+
+  const theoreticalDailyMax = inboxes.reduce((sum, i) => {
+    return (
+      sum +
+      getEffectiveDailyLimit({
+        dailyLimit: i.dailyLimit,
+        warmupEnabled: i.warmupEnabled,
+        warmupStartedAt: i.warmupStartedAt,
+        createdAt: i.createdAt,
+      })
+    );
+  }, 0);
+
+  return {
+    activeInboxes: inboxes.length,
+    activeDomains: domains.length,
+    inboxCapacityToday,
+    inboxSentToday,
+    inboxRemainingToday: Math.max(0, inboxCapacityToday - inboxSentToday),
+    domainCapacityToday,
+    domainSentToday,
+    verifiedDomains: domains.filter((d) => d.isVerified).length,
+    avgInboxCooldownSec: Math.round(avgCooldownSec),
+    theoreticalDailyMax,
+  };
 }

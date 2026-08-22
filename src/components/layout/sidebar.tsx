@@ -13,6 +13,8 @@ import {
   PenSquare,
   Mail,
   ShieldCheck,
+  Globe,
+  Inbox,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +27,8 @@ const nav = [
   { href: "/leads", label: "Lead Finder & Scraper", icon: Search },
   { href: "/verifier", label: "Email Verifier", icon: ShieldCheck },
   { href: "/contacts", label: "Client Database", icon: Users },
+  { href: "/mailboxes", label: "Sending Mailboxes", icon: Inbox },
+  { href: "/domains", label: "Sending Domains", icon: Globe },
   { href: "/settings", label: "Engine Settings", icon: Settings },
 ];
 

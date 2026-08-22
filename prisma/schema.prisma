@@ -66,43 +66,54 @@ model User {
 }
 
 model EmailAccount {
-  id            String   @id @default(cuid())
-  provider      String   @default("SMTP")
+  id            String         @id @default(cuid())
+  provider      String         @default("SMTP")
   apiKey        String?
   host          String?
-  port          Int?     @default(587)
-  secure        Boolean? @default(false)
+  port          Int?           @default(587)
+  secure        Boolean?       @default(false)
   username      String?
   password      String?
   fromEmail     String
   fromName      String?
-  signature     String?  @db.Text
-  dailyLimit    Int      @default(50)
-  sentToday     Int      @default(0)
+  signature     String?        @db.Text
+  domainId      String?
+  domain        SendingDomain? @relation(fields: [domainId], references: [id], onDelete: SetNull)
+  dailyLimit    Int            @default(250)
+  sentToday     Int            @default(0)
   lastSentAt    DateTime?
-  healthScore   Int      @default(100)
-  bounceCount   Int      @default(0)
-  warmupEnabled Boolean  @default(false)
-  warmupStage   Int      @default(1)
-  isActive      Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  healthScore   Int            @default(100)
+  bounceCount   Int            @default(0)
+  warmupEnabled Boolean        @default(true)
+  warmupStage   Int            @default(1)
+  warmupStartedAt DateTime?
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([domainId])
+  @@index([isActive, sentToday])
 }
 
 model SendingDomain {
-  id             String   @id @default(cuid())
-  domainName     String   @unique
-  dkimPrivateKey String?  @db.Text
-  dkimPublicKey  String?  @db.Text
-  dkimSelector   String   @default("dkim")
-  spfVerified    Boolean  @default(false)
-  dkimVerified   Boolean  @default(false)
-  dmarcVerified  Boolean  @default(false)
-  mxVerified     Boolean  @default(false)
-  isVerified     Boolean  @default(false)
+  id             String         @id @default(cuid())
+  domainName     String         @unique
+  dkimPrivateKey String?        @db.Text
+  dkimPublicKey  String?        @db.Text
+  dkimSelector   String         @default("dkim")
+  spfRecordHint  String?        @db.Text
+  spfVerified    Boolean        @default(false)
+  dkimVerified   Boolean        @default(false)
+  dmarcVerified  Boolean        @default(false)
+  mxVerified     Boolean        @default(false)
+  isVerified     Boolean        @default(false)
+  dailyLimit     Int            @default(1000)
+  sentToday      Int            @default(0)
+  lastSentAt     DateTime?
   lastCheckedAt  DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  mailboxes      EmailAccount[]
 }
 
 model SuppressionList {
@@ -110,6 +121,20 @@ model SuppressionList {
   email     String   @unique
   reason    String   @default("UNSUBSCRIBED") // UNSUBSCRIBED | BOUNCED | COMPLAINT
   createdAt DateTime @default(now())
+}
+
+model BounceEvent {
+  id        String   @id @default(cuid())
+  email     String
+  inboxId   String?
+  contactId String?
+  reason    String   @default("HARD_BOUNCE")
+  raw       String?  @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([email])
+  @@index([createdAt])
+  @@index([inboxId])
 }
 
 model Contact {

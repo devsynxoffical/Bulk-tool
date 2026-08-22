@@ -6,6 +6,12 @@ import { PageHeader, StatCard } from "@/components/layout/page-header";
 import { Badge, campaignStatusTone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { getSendingCapacityStats } from "@/lib/email/rotator";
+import {
+  RECOMMENDED_DOMAIN_COUNT,
+  RECOMMENDED_INBOX_COUNT,
+  SYSTEM_DAILY_TARGET,
+} from "@/lib/email/constants";
 
 export default async function OverviewPage() {
   const [
@@ -13,6 +19,7 @@ export default async function OverviewPage() {
     campaigns,
     emailsToday,
     inboxAccounts,
+    capacity,
     recentCampaigns,
     recentMessages,
   ] = await Promise.all([
@@ -24,6 +31,7 @@ export default async function OverviewPage() {
       },
     }),
     prisma.emailAccount.count({ where: { isActive: true } }),
+    getSendingCapacityStats(),
     prisma.campaign.findMany({
       take: 5,
       orderBy: { createdAt: "desc" },
@@ -56,15 +64,44 @@ export default async function OverviewPage() {
       <div className="mb-5 grid gap-3 sm:grid-cols-2">
         <div className="rounded-lg border border-zinc-200 bg-white px-4 py-3">
           <div className="flex items-center justify-between">
+            <p className="text-sm font-medium text-zinc-900">5k/Day Sending Capacity</p>
+            <Badge
+              tone={
+                capacity.inboxCapacityToday >= SYSTEM_DAILY_TARGET
+                  ? "success"
+                  : "warning"
+              }
+            >
+              {capacity.inboxRemainingToday.toLocaleString()} remaining today
+            </Badge>
+          </div>
+          <p className="mt-1 text-xs text-zinc-500">
+            {capacity.activeInboxes}/{RECOMMENDED_INBOX_COUNT} mailboxes ·{" "}
+            {capacity.verifiedDomains}/{RECOMMENDED_DOMAIN_COUNT} verified domains ·{" "}
+            {capacity.inboxSentToday.toLocaleString()} sent today
+          </p>
+          <div className="mt-2 flex gap-2">
+            <Link href="/mailboxes">
+              <Button variant="outline" size="sm" className="h-7 text-xs">
+                Manage Mailboxes
+              </Button>
+            </Link>
+            <Link href="/domains">
+              <Button variant="outline" size="sm" className="h-7 text-xs">
+                Manage Domains
+              </Button>
+            </Link>
+          </div>
+        </div>
+        <div className="rounded-lg border border-zinc-200 bg-white px-4 py-3">
+          <div className="flex items-center justify-between">
             <p className="text-sm font-medium text-zinc-900">Multi-Inbox Rotation Pool</p>
             <Badge tone={inboxAccounts > 0 ? "success" : "warning"}>
               {inboxAccounts > 0 ? `${inboxAccounts} Mailboxes Active` : "Setup Needed"}
             </Badge>
           </div>
           <p className="mt-1 text-xs text-zinc-500">
-            {inboxAccounts > 0
-              ? "Weighted round-robin active with daily send limits"
-              : "Connect email accounts in Settings to enable outreach rotation"}
+            Domain-first round-robin · 45–90s between campaign sends · warmup enabled by default
           </p>
         </div>
       </div>

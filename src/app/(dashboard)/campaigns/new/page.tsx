@@ -49,6 +49,7 @@ export default function NewCampaignPage() {
   const [viewMode, setViewMode] = useState<"preview" | "edit">("preview");
   const [tag, setTag] = useState(initialTag);
   const [rate, setRate] = useState(10);
+  const [scheduledAt, setScheduledAt] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -117,6 +118,9 @@ export default function NewCampaignPage() {
         customBody: customBody || undefined,
         tag: tag || undefined,
         rateLimitPerSecond: rate,
+        scheduledAt: scheduledAt
+          ? new Date(scheduledAt).toISOString()
+          : undefined,
       }),
     });
 
@@ -276,6 +280,30 @@ export default function NewCampaignPage() {
           </CardContent>
         </Card>
 
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Schedule &amp; Pacing</CardTitle>
+            <CardDescription>
+              Campaigns spread sends over 24 hours across {4} parallel workers (~5k/day max).
+              Leave schedule empty to create a draft and launch manually.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="space-y-1.5 max-w-sm">
+              <Label className="text-xs font-bold">Schedule Launch (optional)</Label>
+              <Input
+                type="datetime-local"
+                value={scheduledAt}
+                onChange={(e) => setScheduledAt(e.target.value)}
+              />
+              <p className="text-[11px] text-zinc-500">
+                Requires <code className="bg-zinc-100 px-1 rounded">npm run worker</code> running
+                to auto-launch at the scheduled time.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
         {error ? (
           <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-xs font-medium text-rose-950">
             {error}
@@ -297,7 +325,11 @@ export default function NewCampaignPage() {
             disabled={loading || matchingLeadsCount === 0}
             className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs px-6"
           >
-            {loading ? "Launching Campaign..." : `Launch Cold Campaign (${matchingLeadsCount} Leads)`}
+            {loading
+              ? "Saving..."
+              : scheduledAt
+                ? "Schedule Campaign"
+                : `Create Campaign (${matchingLeadsCount} Leads)`}
           </Button>
         </div>
       </form>

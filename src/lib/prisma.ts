@@ -58,6 +58,10 @@ export async function ensureDbSchema() {
         "dmarcVerified" BOOLEAN NOT NULL DEFAULT false,
         "mxVerified" BOOLEAN NOT NULL DEFAULT false,
         "isVerified" BOOLEAN NOT NULL DEFAULT false,
+        "dailyLimit" INTEGER NOT NULL DEFAULT 1000,
+        "sentToday" INTEGER NOT NULL DEFAULT 0,
+        "lastSentAt" TIMESTAMP(3),
+        "spfRecordHint" TEXT,
         "lastCheckedAt" TIMESTAMP(3),
         "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -74,7 +78,10 @@ export async function ensureDbSchema() {
     `);
 
     await prisma.$executeRawUnsafe(`
-      ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "dailyLimit" INTEGER NOT NULL DEFAULT 50;
+      ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "domainId" TEXT;
+    `);
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "dailyLimit" INTEGER NOT NULL DEFAULT 250;
     `);
     await prisma.$executeRawUnsafe(`
       ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "sentToday" INTEGER NOT NULL DEFAULT 0;
@@ -86,13 +93,41 @@ export async function ensureDbSchema() {
       ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "lastSentAt" TIMESTAMP(3);
     `);
     await prisma.$executeRawUnsafe(`
-      ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "warmupEnabled" BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "warmupStartedAt" TIMESTAMP(3);
+    `);
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "warmupEnabled" BOOLEAN NOT NULL DEFAULT true;
     `);
     await prisma.$executeRawUnsafe(`
       ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "warmupStage" INTEGER NOT NULL DEFAULT 1;
     `);
     await prisma.$executeRawUnsafe(`
       ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "bounceCount" INTEGER NOT NULL DEFAULT 0;
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "SendingDomain" ADD COLUMN IF NOT EXISTS "dailyLimit" INTEGER NOT NULL DEFAULT 1000;
+    `);
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "SendingDomain" ADD COLUMN IF NOT EXISTS "sentToday" INTEGER NOT NULL DEFAULT 0;
+    `);
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "SendingDomain" ADD COLUMN IF NOT EXISTS "lastSentAt" TIMESTAMP(3);
+    `);
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "SendingDomain" ADD COLUMN IF NOT EXISTS "spfRecordHint" TEXT;
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "BounceEvent" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "email" TEXT NOT NULL,
+        "inboxId" TEXT,
+        "contactId" TEXT,
+        "reason" TEXT NOT NULL DEFAULT 'HARD_BOUNCE',
+        "raw" TEXT,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
     `);
 
     await prisma.$executeRawUnsafe(`

@@ -103,6 +103,11 @@ export async function sendSingleEmail(params: {
 
   // Rotate and get healthiest available sending inbox
   const sendingInbox = await getNextSendingInbox();
+  if (!sendingInbox) {
+    throw new Error(
+      "No sending mailbox available (daily limits reached or all inboxes cooling down). Try again later.",
+    );
+  }
 
   const result = await sendEmailMessage({
     to: contact.email,

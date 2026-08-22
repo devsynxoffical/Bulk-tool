@@ -2,8 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma, ensureDbSchema } from "@/lib/prisma";
 import { requireSession } from "@/lib/api";
+import {
+  DEFAULT_INBOX_DAILY_LIMIT,
+  extractDomainFromEmail,
+} from "@/lib/email/constants";
+import {
+  getAutoWarmupStage,
+  getWarmupDayNumber,
+  resolveWarmupContext,
+} from "@/lib/email/warmup";
+import { restartMailboxWarmup } from "@/lib/email/warmup-sync";
 
-const schema = z.object({
+const createSchema = z.object({
   id: z.string().optional(),
   provider: z.string().default("SMTP"),
   host: z.string().min(1, "SMTP host is required"),
@@ -14,9 +24,77 @@ const schema = z.object({
   fromEmail: z.string().email("Valid sender email is required"),
   fromName: z.string().optional(),
   signature: z.string().optional(),
-  dailyLimit: z.number().int().min(5).max(5000).optional().default(50),
+  domainId: z.string().optional().nullable(),
+  dailyLimit: z
+    .number()
+    .int()
+    .min(5)
+    .max(500)
+    .optional()
+    .default(DEFAULT_INBOX_DAILY_LIMIT),
+  warmupEnabled: z.boolean().optional().default(true),
   isActive: z.boolean().optional().default(true),
 });
+
+const signatureOnlySchema = z.object({
+  id: z.string(),
+  signature: z.string(),
+});
+
+async function resolveDomainId(
+  fromEmail: string,
+  explicitDomainId?: string | null,
+): Promise<string | null> {
+  if (explicitDomainId) return explicitDomainId;
+
+  const domainName = extractDomainFromEmail(fromEmail);
+  if (!domainName) return null;
+
+  const domain = await prisma.sendingDomain.findUnique({
+    where: { domainName },
+    select: { id: true },
+  });
+  return domain?.id ?? null;
+}
+
+function formatAccount(
+  acc: Awaited<ReturnType<typeof prisma.emailAccount.findMany>>[number] & {
+    domain?: {
+      domainName: string;
+      isVerified: boolean;
+    } | null;
+  },
+) {
+  const warmup = resolveWarmupContext(acc);
+  return {
+    id: acc.id,
+    provider: "SMTP",
+    host: acc.host || "",
+    port: acc.port || 587,
+    secure: Boolean(acc.secure),
+    username: acc.username || "",
+    fromEmail: acc.fromEmail,
+    fromName: acc.fromName,
+    signature: acc.signature || "",
+    domainId: acc.domainId,
+    domainName: acc.domain?.domainName || extractDomainFromEmail(acc.fromEmail),
+    domainVerified: acc.domain?.isVerified ?? false,
+    dailyLimit: acc.dailyLimit || DEFAULT_INBOX_DAILY_LIMIT,
+    effectiveDailyLimit: warmup.effectiveDailyLimit,
+    sentToday: acc.sentToday || 0,
+    healthScore: acc.healthScore || 100,
+    warmupEnabled: acc.warmupEnabled,
+    warmupStage: warmup.stage,
+    warmupDay: warmup.warmupDay,
+    warmupComplete: warmup.isComplete,
+    warmupLabel: warmup.stageLabel,
+    daysUntilNextStage: warmup.daysUntilNextStage,
+    warmupStartedAt: warmup.startedAt.toISOString(),
+    isActive: acc.isActive,
+    hasPassword: Boolean(acc.password),
+    createdAt: acc.createdAt.toISOString(),
+  };
+}
 
 export async function GET() {
   const { error } = await requireSession();
@@ -26,30 +104,55 @@ export async function GET() {
     await ensureDbSchema();
     const accounts = await prisma.emailAccount.findMany({
       orderBy: { createdAt: "desc" },
+      include: {
+        domain: {
+          select: {
+            id: true,
+            domainName: true,
+            isVerified: true,
+            dailyLimit: true,
+            sentToday: true,
+          },
+        },
+      },
     });
 
-    const formatted = accounts.map((acc) => ({
-      id: acc.id,
-      provider: "SMTP",
-      host: acc.host || "",
-      port: acc.port || 587,
-      secure: Boolean(acc.secure),
-      username: acc.username || "",
-      fromEmail: acc.fromEmail,
-      fromName: acc.fromName,
-      signature: acc.signature || "",
-      dailyLimit: acc.dailyLimit || 50,
-      sentToday: acc.sentToday || 0,
-      healthScore: acc.healthScore || 100,
-      isActive: acc.isActive,
-      hasPassword: Boolean(acc.password),
-    }));
+    // Backfill warmupStartedAt + sync auto stage
+    await Promise.all(
+      accounts.map(async (acc) => {
+        if (!acc.warmupEnabled) return;
 
-    return NextResponse.json({ accounts: formatted });
+        let startedAt = acc.warmupStartedAt ?? acc.createdAt;
+        if (!acc.warmupStartedAt) {
+          await prisma.emailAccount.update({
+            where: { id: acc.id },
+            data: { warmupStartedAt: acc.createdAt },
+          });
+          acc.warmupStartedAt = acc.createdAt;
+          startedAt = acc.createdAt;
+        }
+
+        const stage = getAutoWarmupStage(getWarmupDayNumber(startedAt));
+        if (acc.warmupStage !== stage) {
+          await prisma.emailAccount.update({
+            where: { id: acc.id },
+            data: { warmupStage: stage },
+          });
+          acc.warmupStage = stage;
+        }
+      }),
+    );
+
+    return NextResponse.json({
+      accounts: accounts.map(formatAccount),
+    });
   } catch (e) {
     console.error("GET /api/settings/email error:", e);
     return NextResponse.json(
-      { accounts: [], error: e instanceof Error ? e.message : "Error fetching email accounts" },
+      {
+        accounts: [],
+        error: e instanceof Error ? e.message : "Error fetching email accounts",
+      },
       { status: 500 },
     );
   }
@@ -62,23 +165,55 @@ export async function POST(req: NextRequest) {
   try {
     await ensureDbSchema();
     const body = await req.json();
-    const parsed = schema.safeParse(body);
+
+    const sigOnly = signatureOnlySchema.safeParse(body);
+    if (sigOnly.success) {
+      const account = await prisma.emailAccount.update({
+        where: { id: sigOnly.data.id },
+        data: { signature: sigOnly.data.signature },
+      });
+      return NextResponse.json({ success: true, account });
+    }
+
+    const parsed = createSchema.safeParse(body);
     if (!parsed.success) {
       const issues = parsed.error.issues.map((i) => i.message).join(" | ");
       return NextResponse.json({ error: issues || "Invalid input data" }, { status: 400 });
     }
 
-    const { id, password, signature, dailyLimit, isActive, ...rest } = parsed.data;
+    const {
+      id,
+      password,
+      signature,
+      domainId,
+      dailyLimit,
+      warmupEnabled,
+      isActive,
+      port,
+      ...rest
+    } = parsed.data;
 
     if (!id && !password) {
-      return NextResponse.json({ error: "Password is required when connecting a new mailbox" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Password is required when connecting a new mailbox" },
+        { status: 400 },
+      );
     }
+
+    const isPort465 = Number(port) === 465;
+    const resolvedDomainId = await resolveDomainId(rest.fromEmail, domainId);
+    const now = new Date();
+    const enablingWarmup = warmupEnabled ?? true;
 
     const updateData: Record<string, unknown> = {
       ...rest,
+      port,
+      secure: isPort465 ? true : parsed.data.secure,
       provider: "SMTP",
       signature: signature ?? "",
-      dailyLimit: dailyLimit ?? 50,
+      domainId: resolvedDomainId,
+      dailyLimit: dailyLimit ?? DEFAULT_INBOX_DAILY_LIMIT,
+      warmupEnabled: enablingWarmup,
       isActive: isActive ?? true,
     };
 
@@ -88,6 +223,21 @@ export async function POST(req: NextRequest) {
 
     let account;
     if (id) {
+      const existing = await prisma.emailAccount.findUnique({ where: { id } });
+      if (existing && enablingWarmup && !existing.warmupEnabled) {
+        updateData.warmupStartedAt = now;
+        updateData.warmupStage = 1;
+      }
+      if (enablingWarmup) {
+        const startedAt =
+          (updateData.warmupStartedAt as Date | undefined) ??
+          existing?.warmupStartedAt ??
+          existing?.createdAt ??
+          now;
+        updateData.warmupStage = getAutoWarmupStage(
+          getWarmupDayNumber(startedAt as Date),
+        );
+      }
       account = await prisma.emailAccount.update({
         where: { id },
         data: updateData,
@@ -98,7 +248,9 @@ export async function POST(req: NextRequest) {
           ...updateData,
           fromEmail: rest.fromEmail,
           password: password ?? "",
-        } as any,
+          warmupStartedAt: enablingWarmup ? now : null,
+          warmupStage: 1,
+        } as Parameters<typeof prisma.emailAccount.create>[0]["data"],
       });
     }
 
@@ -118,7 +270,9 @@ export async function DELETE(req: NextRequest) {
 
   try {
     const id = req.nextUrl.searchParams.get("id");
-    if (!id) return NextResponse.json({ error: "Account ID is missing" }, { status: 400 });
+    if (!id) {
+      return NextResponse.json({ error: "Account ID is missing" }, { status: 400 });
+    }
 
     await prisma.emailAccount.delete({ where: { id } });
 

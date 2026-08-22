@@ -12,6 +12,7 @@ const createSchema = z.object({
   tag: z.string().optional(),
   rateLimitPerSecond: z.number().int().min(1).max(80).optional(),
   variableMapping: z.record(z.string(), z.string()).optional(),
+  scheduledAt: z.string().datetime().optional(),
 });
 
 export async function GET() {
@@ -68,6 +69,12 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const scheduledAt = parsed.data.scheduledAt
+    ? new Date(parsed.data.scheduledAt)
+    : undefined;
+  const isScheduled =
+    scheduledAt && scheduledAt.getTime() > Date.now() + 60_000;
+
   const campaign = await prisma.campaign.create({
     data: {
       name: parsed.data.name,
@@ -77,6 +84,8 @@ export async function POST(req: NextRequest) {
       variableMapping: parsed.data.variableMapping || {},
       audienceFilter: parsed.data.tag ? { tag: parsed.data.tag } : undefined,
       totalCount: contacts.length,
+      status: isScheduled ? "SCHEDULED" : "DRAFT",
+      scheduledAt: isScheduled ? scheduledAt : undefined,
       recipients: {
         create: contacts.map((c) => ({ contactId: c.id })),
       },

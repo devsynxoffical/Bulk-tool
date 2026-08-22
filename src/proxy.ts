@@ -15,7 +15,12 @@ export default auth((req) => {
 
   if (isPublicApi) return NextResponse.next();
 
+  const isApiRoute = pathname.startsWith("/api/");
+
   if (!isLoggedIn && !isLogin) {
+    if (isApiRoute) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
     return NextResponse.redirect(new URL("/login", req.url));
   }
 
