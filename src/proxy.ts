@@ -11,6 +11,8 @@ export default auth((req) => {
   const isPublicApi =
     pathname.startsWith("/api/auth") ||
     pathname.startsWith("/api/webhooks") ||
+    pathname === "/api/emails/track" ||
+    pathname.startsWith("/api/unsubscribe") ||
     pathname === "/webhook";
 
   if (isPublicApi) return NextResponse.next();
