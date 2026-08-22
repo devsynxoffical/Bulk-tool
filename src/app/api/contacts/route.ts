@@ -24,6 +24,10 @@ export async function GET(req: NextRequest) {
 
   const q = req.nextUrl.searchParams.get("q")?.trim();
   const tag = req.nextUrl.searchParams.get("tag")?.trim();
+  const limitRaw = Number(req.nextUrl.searchParams.get("limit") || 500);
+  const take = Number.isFinite(limitRaw)
+    ? Math.min(Math.max(Math.floor(limitRaw), 1), 10000)
+    : 500;
 
   const contacts = await prisma.contact.findMany({
     where: {
@@ -41,7 +45,7 @@ export async function GET(req: NextRequest) {
       ],
     },
     orderBy: { createdAt: "desc" },
-    take: 500,
+    take,
   });
 
   return NextResponse.json(contacts);

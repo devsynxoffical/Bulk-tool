@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Users, Eye, Edit3, Sparkles, Mail, Send } from "lucide-react";
+import { Users, Eye, Edit3, Sparkles } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Textarea } from "@/components/ui/input";
@@ -34,6 +34,17 @@ type ContactSummary = {
   optedOut: boolean;
   emailOptedOut: boolean;
 };
+
+type AudienceOption = {
+  value: string;
+  label: string;
+  count: number;
+  kind: "all" | "scraped" | "tag";
+};
+
+function isEmailReady(c: ContactSummary) {
+  return Boolean(c.email && !c.emailOptedOut);
+}
 
 export default function NewCampaignPage() {
   const router = useRouter();
@@ -68,12 +79,55 @@ export default function NewCampaignPage() {
         }
       });
 
-    fetch("/api/contacts")
+    fetch("/api/contacts?limit=5000")
       .then((r) => r.json())
       .then((data: ContactSummary[]) => {
         if (Array.isArray(data)) setAllContacts(data);
       });
   }, []);
+
+  const audienceOptions = useMemo((): AudienceOption[] => {
+    const emailReady = allContacts.filter(isEmailReady);
+    const byTag = new Map<string, number>();
+
+    for (const c of emailReady) {
+      for (const t of c.tags) {
+        const key = t.trim();
+        if (!key) continue;
+        byTag.set(key, (byTag.get(key) || 0) + 1);
+      }
+    }
+
+    const tagOptions: AudienceOption[] = Array.from(byTag.entries())
+      .map(([value, count]) => {
+        const scraped =
+          value === "maps-leads" ||
+          value.toLowerCase().includes("maps") ||
+          value.toLowerCase().includes("scrape");
+        return {
+          value,
+          count,
+          kind: scraped ? ("scraped" as const) : ("tag" as const),
+          label: scraped
+            ? `Scraped · ${value} (${count})`
+            : `${value} (${count})`,
+        };
+      })
+      .sort((a, b) => {
+        if (a.kind !== b.kind) return a.kind === "scraped" ? -1 : 1;
+        return b.count - a.count || a.value.localeCompare(b.value);
+      });
+
+    return [
+      {
+        value: "",
+        label: `All email leads (${emailReady.length})`,
+        count: emailReady.length,
+        kind: "all",
+      },
+      ...tagOptions,
+    ];
+  }, [allContacts]);
 
   function handleSelectTemplate(tId: string) {
     setTemplateId(tId);
@@ -84,12 +138,11 @@ export default function NewCampaignPage() {
     }
   }
 
-  // Calculate live matching leads
   const matchingLeadsCount = allContacts.filter((c) => {
     if (tag.trim()) {
       if (!c.tags.includes(tag.trim())) return false;
     }
-    return Boolean(c.email && !c.emailOptedOut);
+    return isEmailReady(c);
   }).length;
 
   function renderPreviewHtml(content: string) {
@@ -161,7 +214,6 @@ export default function NewCampaignPage() {
           </CardHeader>
 
           <CardContent className="space-y-5">
-            {/* Campaign Name & Tag */}
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-zinc-800">Campaign Name *</Label>
@@ -175,21 +227,37 @@ export default function NewCampaignPage() {
 
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <Label className="text-xs font-bold text-zinc-800">Target Audience Tag (Optional)</Label>
+                  <Label className="text-xs font-bold text-zinc-800">
+                    Select Scraped / Imported List *
+                  </Label>
                   <span className="flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
                     <Users className="h-3 w-3" />
                     {matchingLeadsCount} Leads Selected
                   </span>
                 </div>
-                <Input
+                <select
                   value={tag}
                   onChange={(e) => setTag(e.target.value)}
-                  placeholder="e.g. maps-leads or real-estate"
-                />
+                  className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs text-zinc-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {audienceOptions.map((opt) => (
+                    <option key={opt.value || "__all__"} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-zinc-500">
+                  Scraped lists appear after <strong>Import to Database</strong> in Lead Finder.
+                  CSV imports appear under their tags.
+                </p>
+                {audienceOptions.length <= 1 ? (
+                  <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5">
+                    No tagged lists yet. Scrape leads → Import to Database, or upload CSV in Client Database.
+                  </p>
+                ) : null}
               </div>
             </div>
 
-            {/* Template Selector */}
             <div className="space-y-2 border-t border-zinc-100 pt-4">
               <Label className="text-xs font-bold text-zinc-800">Select Outreach Template *</Label>
               <select
@@ -205,7 +273,6 @@ export default function NewCampaignPage() {
               </select>
             </div>
 
-            {/* Preview & Edit Mode Toggle */}
             <div className="rounded-xl border border-zinc-200 bg-zinc-50/50 p-4 space-y-4">
               <div className="flex items-center justify-between border-b border-zinc-200/80 pb-3">
                 <div className="flex items-center gap-2">
@@ -231,16 +298,20 @@ export default function NewCampaignPage() {
                   </Button>
                 </div>
                 <span className="text-[11px] font-medium text-zinc-500">
-                  {viewMode === "preview" ? "Showing compiled visual layout" : "Editing template source text"}
+                  {viewMode === "preview"
+                    ? "Showing compiled visual layout"
+                    : "Editing template source text"}
                 </span>
               </div>
 
-              {/* View Mode 1: Live Visual HTML Preview */}
               {viewMode === "preview" ? (
                 <div className="space-y-3">
                   <div className="rounded-lg border border-zinc-200 bg-white p-3 space-y-1">
                     <p className="text-xs text-zinc-500">
-                      <strong>Subject Line:</strong> <span className="font-bold text-zinc-900">{customSubject || "(No Subject Set)"}</span>
+                      <strong>Subject Line:</strong>{" "}
+                      <span className="font-bold text-zinc-900">
+                        {customSubject || "(No Subject Set)"}
+                      </span>
                     </p>
                   </div>
 
@@ -253,7 +324,6 @@ export default function NewCampaignPage() {
                   </div>
                 </div>
               ) : (
-                /* View Mode 2: Edit Subject & Body */
                 <div className="space-y-4 bg-white p-4 rounded-lg border border-zinc-200">
                   <div className="space-y-1.5">
                     <Label className="text-xs font-bold text-zinc-800">Email Subject Line</Label>
@@ -265,7 +335,9 @@ export default function NewCampaignPage() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <Label className="text-xs font-bold text-zinc-800">Email Body HTML / Plain Text</Label>
+                    <Label className="text-xs font-bold text-zinc-800">
+                      Email Body HTML / Plain Text
+                    </Label>
                     <Textarea
                       rows={10}
                       value={customBody}
