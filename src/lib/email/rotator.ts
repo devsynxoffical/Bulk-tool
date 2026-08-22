@@ -124,7 +124,15 @@ function rankInboxes(inboxes: InboxWithDomain[]): InboxWithDomain[] {
 /**
  * Domain-first round-robin with per-inbox cooldown and bounce-rate filtering.
  */
-export async function getNextSendingInbox(): Promise<EmailAccountRecord> {
+export type GetNextSendingInboxOptions = {
+  /** When false, manual one-off sends can go immediately (campaigns keep default true). */
+  respectCooldown?: boolean;
+};
+
+export async function getNextSendingInbox(
+  options: GetNextSendingInboxOptions = {},
+): Promise<EmailAccountRecord> {
+  const { respectCooldown = true } = options;
   await checkDailyReset();
 
   const inboxes = await prisma.emailAccount.findMany({
@@ -152,7 +160,7 @@ export async function getNextSendingInbox(): Promise<EmailAccountRecord> {
       inboxHasCapacity(inbox) &&
       domainHasCapacity(inbox.domain) &&
       inboxBounceRateOk(inbox) &&
-      inboxCooldownReady(inbox),
+      (respectCooldown ? inboxCooldownReady(inbox) : true),
   );
 
   if (eligible.length === 0) return null;
@@ -183,13 +191,18 @@ export async function getMsUntilInboxAvailable(): Promise<number> {
   return Math.max(minWait, 5000);
 }
 
-export async function recordInboxSend(inboxId: string, domainId?: string | null) {
+export async function recordInboxSend(
+  inboxId: string,
+  domainId?: string | null,
+  options: { applyCooldown?: boolean } = {},
+) {
+  const { applyCooldown = true } = options;
   try {
     await prisma.emailAccount.update({
       where: { id: inboxId },
       data: {
         sentToday: { increment: 1 },
-        lastSentAt: new Date(),
+        ...(applyCooldown ? { lastSentAt: new Date() } : {}),
       },
     });
 

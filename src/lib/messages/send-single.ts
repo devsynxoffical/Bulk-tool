@@ -1,6 +1,9 @@
 import { prisma } from "@/lib/prisma";
 import { renderTemplateString, sendEmailMessage } from "@/lib/email/client";
-import { getNextSendingInbox } from "@/lib/email/rotator";
+import {
+  getMsUntilInboxAvailable,
+  getNextSendingInbox,
+} from "@/lib/email/rotator";
 
 function contactVars(contact: {
   name: string | null;
@@ -83,6 +86,20 @@ export async function sendSingleEmail(params: {
     html = renderTemplateString(html, vars);
   }
 
+  const sendingInbox = await getNextSendingInbox({ respectCooldown: false });
+  if (!sendingInbox) {
+    const waitMs = await getMsUntilInboxAvailable();
+    if (waitMs > 0) {
+      const waitMin = Math.max(1, Math.ceil(waitMs / 60_000));
+      throw new Error(
+        `Daily send limit reached for all mailboxes. Campaign queue resumes in about ${waitMin} minute(s).`,
+      );
+    }
+    throw new Error(
+      "No sending mailbox available (daily limits reached or inboxes paused). Check Mailboxes.",
+    );
+  }
+
   const conv = await upsertConversation({
     contactId: contact.id,
     preview: subject,
@@ -101,14 +118,6 @@ export async function sendSingleEmail(params: {
     },
   });
 
-  // Rotate and get healthiest available sending inbox
-  const sendingInbox = await getNextSendingInbox();
-  if (!sendingInbox) {
-    throw new Error(
-      "No sending mailbox available (daily limits reached or all inboxes cooling down). Try again later.",
-    );
-  }
-
   const result = await sendEmailMessage({
     to: contact.email,
     subject,
@@ -119,6 +128,7 @@ export async function sendSingleEmail(params: {
     pdfUrl,
     trackingId: message.id,
     account: sendingInbox || undefined,
+    applySendCooldown: false,
   });
 
   if (result?.messageId) {

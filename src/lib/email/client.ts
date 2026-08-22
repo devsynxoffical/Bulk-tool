@@ -25,6 +25,8 @@ export async function sendEmailMessage(params: {
   attachments?: EmailAttachment[];
   trackingId?: string;
   account?: Awaited<ReturnType<typeof getActiveEmailAccount>>;
+  /** Campaign sends apply per-inbox cooldown; manual/test sends should pass false. */
+  applySendCooldown?: boolean;
 }) {
   const recipient = params.to.trim().toLowerCase();
 
@@ -197,7 +199,9 @@ export async function sendEmailMessage(params: {
       }
 
       const { recordInboxSend } = await import("@/lib/email/rotator");
-      await recordInboxSend(account.id, domainId);
+      await recordInboxSend(account.id, domainId, {
+        applyCooldown: params.applySendCooldown !== false,
+      });
     } catch {
       // ignore non-critical stats update error
     }

@@ -81,6 +81,7 @@ export async function POST(req: NextRequest) {
         </div>
       `,
       account: account as Parameters<typeof sendEmailMessage>[0]["account"],
+      applySendCooldown: false,
     });
 
     const timeoutPromise = new Promise<{ messageId: string }>((_, reject) =>
