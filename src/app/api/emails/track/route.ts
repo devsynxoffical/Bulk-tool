@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
           }
         }
       } else {
-        // Check if messageId is directly a CampaignRecipient ID
+        // Campaign sends use CampaignRecipient id as the tracking pixel id
         const recipient = await prisma.campaignRecipient.findUnique({
           where: { id: messageId },
         });
@@ -64,6 +64,32 @@ export async function GET(req: NextRequest) {
           await prisma.campaign.update({
             where: { id: recipient.campaignId },
             data: { readCount: { increment: 1 } },
+          });
+
+          // Keep Sent Email Tracker in sync (Message row was still "SENT")
+          if (recipient.messageId) {
+            await prisma.message.update({
+              where: { id: recipient.messageId },
+              data: { status: "READ" },
+            });
+          } else {
+            await prisma.message.updateMany({
+              where: {
+                campaignId: recipient.campaignId,
+                contactId: recipient.contactId,
+                status: { not: "READ" },
+              },
+              data: { status: "READ" },
+            });
+          }
+        } else if (recipient?.status === "READ" && recipient.messageId) {
+          // Backfill Message if campaign already marked READ earlier
+          await prisma.message.updateMany({
+            where: {
+              id: recipient.messageId,
+              status: { not: "READ" },
+            },
+            data: { status: "READ" },
           });
         }
       }

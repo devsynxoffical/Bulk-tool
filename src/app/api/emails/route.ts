@@ -28,6 +28,64 @@ export async function GET() {
       take: 300,
     });
 
+    // Campaign opens may be on CampaignRecipient while Message stayed SENT
+    const openRecipients = await prisma.campaignRecipient.findMany({
+      where: {
+        status: "READ",
+        OR: [
+          { messageId: { in: emailMessages.map((m) => m.id).filter(Boolean) } },
+          {
+            AND: [
+              { campaignId: { in: emailMessages.map((m) => m.campaignId).filter(Boolean) as string[] } },
+              { contactId: { in: emailMessages.map((m) => m.contactId) } },
+            ],
+          },
+        ],
+      },
+      select: {
+        messageId: true,
+        campaignId: true,
+        contactId: true,
+        readAt: true,
+      },
+    });
+
+    const openByMessageId = new Map(
+      openRecipients
+        .filter((r) => r.messageId)
+        .map((r) => [r.messageId as string, r.readAt] as const),
+    );
+    const openByCampaignContact = new Set(
+      openRecipients.map((r) => `${r.campaignId}:${r.contactId}`),
+    );
+
+    const directRecords = emailMessages.map((msg) => {
+      const openedViaCampaign =
+        (msg.id && openByMessageId.has(msg.id)) ||
+        (msg.campaignId &&
+          openByCampaignContact.has(`${msg.campaignId}:${msg.contactId}`));
+      const status = openedViaCampaign && msg.status !== "READ" ? "READ" : msg.status;
+      const readAt =
+        status === "READ"
+          ? openByMessageId.get(msg.id) ||
+            (msg.status === "READ" ? msg.updatedAt : null)
+          : null;
+
+      return {
+        id: msg.id,
+        type: msg.campaignId ? "CAMPAIGN" : "DIRECT",
+        recipientEmail: msg.contact.email || "No email",
+        recipientName: msg.contact.name || "Valued Client",
+        subject: msg.subject || "No Subject",
+        body: msg.body || "",
+        status,
+        sentAt: msg.createdAt,
+        readAt,
+        campaignName: msg.campaign?.name || null,
+        pdfUrl: null,
+      };
+    });
+
     // Campaign rows only when there is no Message yet (avoids duplicate {{company}} rows)
     const campaignRecipients = await prisma.campaignRecipient.findMany({
       where: {
@@ -46,20 +104,6 @@ export async function GET() {
       orderBy: { updatedAt: "desc" },
       take: 200,
     });
-
-    const directRecords = emailMessages.map((msg) => ({
-      id: msg.id,
-      type: msg.campaignId ? "CAMPAIGN" : "DIRECT",
-      recipientEmail: msg.contact.email || "No email",
-      recipientName: msg.contact.name || "Valued Client",
-      subject: msg.subject || "No Subject",
-      body: msg.body || "",
-      status: msg.status,
-      sentAt: msg.createdAt,
-      readAt: msg.status === "READ" ? msg.updatedAt : null,
-      campaignName: msg.campaign?.name || null,
-      pdfUrl: null,
-    }));
 
     const campaignOnlyRecords = campaignRecipients.map((cr) => ({
       id: cr.id,
