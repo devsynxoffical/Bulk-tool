@@ -201,12 +201,32 @@ export async function POST(req: NextRequest) {
     }
 
     const isPort465 = Number(port) === 465;
-    const resolvedDomainId = await resolveDomainId(rest.fromEmail, domainId);
+    const normalizedFrom = rest.fromEmail.trim().toLowerCase();
+    const normalizedUser = rest.username.trim();
+    const resolvedDomainId = await resolveDomainId(normalizedFrom, domainId);
     const now = new Date();
     const enablingWarmup = warmupEnabled ?? true;
 
+    const duplicate = await prisma.emailAccount.findFirst({
+      where: {
+        fromEmail: { equals: normalizedFrom, mode: "insensitive" },
+        ...(id ? { NOT: { id } } : {}),
+      },
+      select: { id: true, fromEmail: true },
+    });
+    if (duplicate) {
+      return NextResponse.json(
+        {
+          error: `Mailbox ${duplicate.fromEmail} already exists. Edit that card or delete the duplicate first — don't add the same address twice.`,
+        },
+        { status: 409 },
+      );
+    }
+
     const updateData: Record<string, unknown> = {
       ...rest,
+      fromEmail: normalizedFrom,
+      username: normalizedUser,
       port,
       secure: isPort465 ? true : parsed.data.secure,
       provider: "SMTP",
@@ -246,7 +266,7 @@ export async function POST(req: NextRequest) {
       account = await prisma.emailAccount.create({
         data: {
           ...updateData,
-          fromEmail: rest.fromEmail,
+          fromEmail: normalizedFrom,
           password: password ?? "",
           warmupStartedAt: enablingWarmup ? now : null,
           warmupStage: 1,

@@ -133,12 +133,12 @@ export function MailboxManager() {
     loadData();
   }, [loadData]);
 
+  // Prefill host + domain only — never force "info@" (user chooses mailbox name)
   useEffect(() => {
     if (!presetDomain) return;
-    setHost(`mail.${presetDomain}`);
-    const local = `info@${presetDomain}`;
-    setFromEmail(local);
-    setUsername(local);
+    setHost((prev) => prev || `mail.${presetDomain}`);
+    setUsername((prev) => prev || "");
+    setFromEmail((prev) => prev || "");
   }, [presetDomain]);
 
   useEffect(() => {
@@ -146,6 +146,15 @@ export function MailboxManager() {
     const match = domains.find((d) => d.domainName === presetDomain);
     if (match) setDomainId(match.id);
   }, [presetDomain, domains]);
+
+  function handleUsernameChange(value: string) {
+    setUsername(value);
+    // Keep From Email in sync when user types the mailbox address
+    const looksLikeEmail = value.includes("@");
+    if (looksLikeEmail) {
+      setFromEmail(value.trim().toLowerCase());
+    }
+  }
 
   function handlePortChange(nextPort: number) {
     setPort(nextPort);
@@ -382,6 +391,9 @@ export function MailboxManager() {
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
                       <p className="font-semibold text-sm truncate">{acc.fromEmail}</p>
+                      {acc.fromName ? (
+                        <p className="text-[11px] text-zinc-600 truncate">From name: {acc.fromName}</p>
+                      ) : null}
                       <p className="text-[11px] text-zinc-500 truncate">
                         {acc.domainName || "No domain linked"}
                         {acc.domainVerified ? " · DNS verified" : " · DNS pending"}
@@ -472,8 +484,15 @@ export function MailboxManager() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label>Username</Label>
-                <Input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="you@domain.com" required />
+                <Label>Username (full email)</Label>
+                <Input
+                  value={username}
+                  onChange={(e) => handleUsernameChange(e.target.value)}
+                  placeholder={
+                    presetDomain ? `hello@${presetDomain}` : "hello@yourdomain.com"
+                  }
+                  required
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>{editingId ? "Password (leave blank to keep)" : "Password *"}</Label>
@@ -502,12 +521,24 @@ export function MailboxManager() {
 
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div className="space-y-1.5">
-                <Label>From Email</Label>
-                <Input type="email" value={fromEmail} onChange={(e) => setFromEmail(e.target.value)} required />
+                <Label>From Email (must match mailbox)</Label>
+                <Input
+                  type="email"
+                  value={fromEmail}
+                  onChange={(e) => setFromEmail(e.target.value.trim().toLowerCase())}
+                  placeholder={
+                    presetDomain ? `hello@${presetDomain}` : "hello@yourdomain.com"
+                  }
+                  required
+                />
               </div>
               <div className="space-y-1.5">
-                <Label>From Name</Label>
-                <Input value={fromName} onChange={(e) => setFromName(e.target.value)} />
+                <Label>From Name (display only)</Label>
+                <Input
+                  value={fromName}
+                  onChange={(e) => setFromName(e.target.value)}
+                  placeholder="e.g. DevSynx"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Sending Domain</Label>
