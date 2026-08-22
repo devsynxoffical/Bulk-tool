@@ -70,9 +70,25 @@ function contactVars(contact: {
       : {};
 
   return {
-    name: contact.name || "",
+    name: contact.name || "there",
     phone: contact.phone || "",
     email: contact.email || "",
+    company:
+      custom.company ||
+      custom.Company ||
+      custom.AgencyName ||
+      contact.name ||
+      "your business",
+    city: custom.city || custom.City || custom.location || "your area",
+    location: custom.location || custom.city || custom.City || "your area",
+    FirstName: contact.name || "there",
+    AgencyName:
+      custom.company ||
+      custom.Company ||
+      custom.AgencyName ||
+      contact.name ||
+      "your business",
+    City: custom.city || custom.City || custom.location || "your area",
     ...custom,
   };
 }

@@ -99,6 +99,8 @@ export async function POST(req: NextRequest) {
         const tags = Array.from(new Set([...currentTags, tag, "maps-leads"]));
 
         const customFields = {
+          company: name || "",
+          city: cityFromAddress(row.Address),
           website: row.Website || null,
           address: row.Address || null,
           category: row.Category || null,
@@ -153,4 +155,11 @@ function toNumber(value: string | number | undefined): number | null {
   if (typeof value !== "string") return null;
   const n = Number(value.replace(/[^0-9.]/g, ""));
   return Number.isNaN(n) ? null : n;
+}
+
+function cityFromAddress(address: string | undefined | null): string {
+  if (!address || typeof address !== "string") return "";
+  const parts = address.split(",").map((p) => p.trim()).filter(Boolean);
+  if (parts.length >= 2) return parts[parts.length - 2] || parts[parts.length - 1] || "";
+  return parts[0] || "";
 }

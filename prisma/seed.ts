@@ -1,5 +1,9 @@
 import bcrypt from "bcryptjs";
 import { PrismaClient } from "@prisma/client";
+import {
+  GENERIC_BUSINESS_OUTREACH_HTML,
+  GENERIC_BUSINESS_OUTREACH_SUBJECT,
+} from "../src/lib/email/templates/generic-business-outreach";
 
 const prisma = new PrismaClient();
 
@@ -54,6 +58,16 @@ const sampleTemplates: Array<{
   <p style="margin:0 0 12px;color:#52525b">We’ve prepared a custom proposal based on your inquiry. Review the details and reply to this email if you’d like to proceed or adjust the scope.</p>
   <p style="margin:0;color:#71717a;font-size:13px">Happy to answer any questions.</p>
 </div>`,
+    isSample: true,
+  },
+  {
+    channel: "EMAIL",
+    name: "generic_business_outreach",
+    language: "en_US",
+    category: "MARKETING",
+    status: "APPROVED",
+    subject: GENERIC_BUSINESS_OUTREACH_SUBJECT,
+    body: GENERIC_BUSINESS_OUTREACH_HTML,
     isSample: true,
   },
 ];
