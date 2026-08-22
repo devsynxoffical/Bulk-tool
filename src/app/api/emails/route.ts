@@ -2,12 +2,14 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/api";
 
+const SENT_LIKE = new Set(["SENT", "DELIVERED", "READ", "FAILED", "SKIPPED"]);
+
 export async function GET() {
   const { error } = await requireSession();
   if (error) return error;
 
   try {
-    // 1. Fetch direct outbound Email Messages
+    // Source of truth for sent mail (compose + campaigns that created a Message)
     const emailMessages = await prisma.message.findMany({
       where: {
         channel: "EMAIL",
@@ -23,15 +25,15 @@ export async function GET() {
         },
       },
       orderBy: { createdAt: "desc" },
-      take: 200,
+      take: 300,
     });
 
-    // 2. Fetch Campaign Email Recipients
+    // Campaign rows only when there is no Message yet (avoids duplicate {{company}} rows)
     const campaignRecipients = await prisma.campaignRecipient.findMany({
       where: {
-        campaign: {
-          channel: "EMAIL",
-        },
+        campaign: { channel: "EMAIL" },
+        status: { in: ["SENT", "DELIVERED", "READ", "FAILED", "SKIPPED"] },
+        messageId: null,
       },
       include: {
         contact: true,
@@ -45,10 +47,9 @@ export async function GET() {
       take: 200,
     });
 
-    // Combine and structure email records
     const directRecords = emailMessages.map((msg) => ({
       id: msg.id,
-      type: "DIRECT",
+      type: msg.campaignId ? "CAMPAIGN" : "DIRECT",
       recipientEmail: msg.contact.email || "No email",
       recipientName: msg.contact.name || "Valued Client",
       subject: msg.subject || "No Subject",
@@ -60,13 +61,13 @@ export async function GET() {
       pdfUrl: null,
     }));
 
-    const campaignRecords = campaignRecipients.map((cr) => ({
+    const campaignOnlyRecords = campaignRecipients.map((cr) => ({
       id: cr.id,
       type: "CAMPAIGN",
       recipientEmail: cr.contact.email || "No email",
       recipientName: cr.contact.name || "Valued Client",
-      subject: cr.campaign.template?.subject || cr.campaign.name,
-      body: cr.campaign.template?.body || "",
+      subject: cr.campaign.name,
+      body: "",
       status: cr.status,
       sentAt: cr.sentAt || cr.createdAt,
       readAt: cr.readAt,
@@ -75,17 +76,21 @@ export async function GET() {
       errorMessage: cr.errorMessage || null,
     }));
 
-    // Deduplicate by recipient & subject if necessary, and sort by sentAt desc
-    const combined = [...directRecords, ...campaignRecords].sort(
+    const combined = [...directRecords, ...campaignOnlyRecords].sort(
       (a, b) => new Date(b.sentAt).getTime() - new Date(a.sentAt).getTime(),
     );
 
-    // Calculate aggregated KPIs
-    const totalSent = combined.length;
-    const totalOpened = combined.filter((r) => r.status === "READ").length;
-    const totalDelivered = combined.filter((r) => r.status === "DELIVERED" || r.status === "READ").length;
-    const totalFailed = combined.filter((r) => r.status === "FAILED").length;
-    const openRate = totalSent > 0 ? ((totalOpened / totalSent) * 100).toFixed(1) : "0.0";
+    const countable = combined.filter((r) => SENT_LIKE.has(r.status));
+    const totalSent = countable.filter((r) =>
+      ["SENT", "DELIVERED", "READ"].includes(r.status),
+    ).length;
+    const totalOpened = countable.filter((r) => r.status === "READ").length;
+    const totalDelivered = countable.filter(
+      (r) => r.status === "DELIVERED" || r.status === "READ",
+    ).length;
+    const totalFailed = countable.filter((r) => r.status === "FAILED").length;
+    const openRate =
+      totalSent > 0 ? ((totalOpened / totalSent) * 100).toFixed(1) : "0.0";
 
     return NextResponse.json({
       stats: {
