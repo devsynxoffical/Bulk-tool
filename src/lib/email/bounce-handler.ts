@@ -13,11 +13,21 @@ export function isLikelySmtpBounce(errorMessage: string): boolean {
   return BOUNCE_SMTP_PATTERNS.test(errorMessage);
 }
 
+export function isValidRecipientEmail(email: string): boolean {
+  const lower = email.trim().toLowerCase();
+  if (!lower.includes("@")) return false;
+  const domain = lower.split("@")[1] || "";
+  if (/\.(png|jpg|jpeg|gif|webp|svg|pdf)$/i.test(domain)) return false;
+  return /^[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}$/.test(lower);
+}
+
 function extractEmailFromText(text: string): string | null {
-  const match = text.match(
-    /[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}/,
-  );
-  return match ? match[0].toLowerCase() : null;
+  const matches = text.match(/[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}/g) || [];
+  for (const raw of matches) {
+    const email = raw.toLowerCase();
+    if (isValidRecipientEmail(email)) return email;
+  }
+  return null;
 }
 
 /**
@@ -31,7 +41,7 @@ export async function recordBounce(params: {
   contactId?: string;
 }) {
   const email = params.email.trim().toLowerCase();
-  if (!email.includes("@")) return { ok: false, error: "Invalid email" };
+  if (!isValidRecipientEmail(email)) return { ok: false, error: "Invalid email" };
 
   const reason = params.reason || "HARD_BOUNCE";
   const suppressionReason =
@@ -43,10 +53,42 @@ export async function recordBounce(params: {
     update: { reason: suppressionReason },
   });
 
+  const contact = await prisma.contact.findFirst({
+    where: { email: { equals: email, mode: "insensitive" } },
+    select: { id: true },
+  });
+
   await prisma.contact.updateMany({
-    where: { email },
+    where: { email: { equals: email, mode: "insensitive" } },
     data: { emailOptedOut: true },
   });
+
+  if (contact) {
+    const bounceNote = `Bounced (${reason})`;
+    await prisma.campaignRecipient.updateMany({
+      where: {
+        contactId: contact.id,
+        status: { in: ["SENT", "DELIVERED", "QUEUED", "READ"] },
+      },
+      data: {
+        status: "FAILED",
+        errorMessage: bounceNote,
+      },
+    });
+
+    await prisma.message.updateMany({
+      where: {
+        contactId: contact.id,
+        channel: "EMAIL",
+        direction: "OUTBOUND",
+        status: { in: ["SENT", "DELIVERED", "READ"] },
+      },
+      data: {
+        status: "FAILED",
+        errorMessage: params.raw?.slice(0, 500) || bounceNote,
+      },
+    });
+  }
 
   await prisma.bounceEvent.create({
     data: {
@@ -54,7 +96,7 @@ export async function recordBounce(params: {
       inboxId: params.inboxId ?? undefined,
       reason,
       raw: params.raw?.slice(0, 4000),
-      contactId: params.contactId,
+      contactId: params.contactId ?? contact?.id,
     },
   });
 
@@ -89,12 +131,18 @@ export function parseBouncedRecipientFromBody(body: string): string | null {
   const finalRecipient = body.match(
     /final-recipient:\s*rfc822;\s*([\w.+-]+@[\w.-]+\.\w+)/i,
   );
-  if (finalRecipient) return finalRecipient[1].toLowerCase();
+  if (finalRecipient) {
+    const addr = finalRecipient[1].toLowerCase();
+    if (isValidRecipientEmail(addr)) return addr;
+  }
 
   const original = body.match(
     /original-recipient:\s*rfc822;\s*([\w.+-]+@[\w.-]+\.\w+)/i,
   );
-  if (original) return original[1].toLowerCase();
+  if (original) {
+    const addr = original[1].toLowerCase();
+    if (isValidRecipientEmail(addr)) return addr;
+  }
 
   if (lower.includes("mail delivery failed") || lower.includes("undeliverable")) {
     return extractEmailFromText(body);
