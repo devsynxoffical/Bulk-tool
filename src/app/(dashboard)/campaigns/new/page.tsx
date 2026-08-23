@@ -63,6 +63,11 @@ export default function NewCampaignPage() {
   const [scheduledAt, setScheduledAt] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  /** Default ON — never re-email people who already got a send. */
+  const [excludeAlreadyEmailed, setExcludeAlreadyEmailed] = useState(true);
+  const [alreadyEmailedIds, setAlreadyEmailedIds] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   useEffect(() => {
     fetch("/api/templates")
@@ -84,13 +89,36 @@ export default function NewCampaignPage() {
       .then((data: ContactSummary[]) => {
         if (Array.isArray(data)) setAllContacts(data);
       });
+
+    fetch("/api/contacts/already-emailed")
+      .then((r) => r.json())
+      .then((data: { contactIds?: string[] }) => {
+        if (Array.isArray(data.contactIds)) {
+          setAlreadyEmailedIds(new Set(data.contactIds));
+        }
+      })
+      .catch(() => {
+        /* ignore — filter still works server-side on create */
+      });
   }, []);
 
+  const eligibleContacts = useMemo(() => {
+    return allContacts.filter((c) => {
+      if (!isEmailReady(c)) return false;
+      if (excludeAlreadyEmailed && alreadyEmailedIds.has(c.id)) return false;
+      return true;
+    });
+  }, [allContacts, excludeAlreadyEmailed, alreadyEmailedIds]);
+
+  const alreadyEmailedCount = useMemo(() => {
+    return allContacts.filter((c) => isEmailReady(c) && alreadyEmailedIds.has(c.id))
+      .length;
+  }, [allContacts, alreadyEmailedIds]);
+
   const audienceOptions = useMemo((): AudienceOption[] => {
-    const emailReady = allContacts.filter(isEmailReady);
     const byTag = new Map<string, number>();
 
-    for (const c of emailReady) {
+    for (const c of eligibleContacts) {
       for (const t of c.tags) {
         const key = t.trim();
         if (!key) continue;
@@ -119,16 +147,20 @@ export default function NewCampaignPage() {
         return b.count - a.count || a.value.localeCompare(b.value);
       });
 
+    const neverLabel = excludeAlreadyEmailed
+      ? `All not-yet-emailed leads (${eligibleContacts.length})`
+      : `All email leads (${eligibleContacts.length})`;
+
     return [
       {
         value: "",
-        label: `All email leads (${emailReady.length})`,
-        count: emailReady.length,
+        label: neverLabel,
+        count: eligibleContacts.length,
         kind: "all",
       },
       ...tagOptions,
     ];
-  }, [allContacts]);
+  }, [eligibleContacts, excludeAlreadyEmailed]);
 
   function handleSelectTemplate(tId: string) {
     setTemplateId(tId);
@@ -139,11 +171,11 @@ export default function NewCampaignPage() {
     }
   }
 
-  const matchingLeadsCount = allContacts.filter((c) => {
+  const matchingLeadsCount = eligibleContacts.filter((c) => {
     if (tag.trim()) {
       if (!c.tags.includes(tag.trim())) return false;
     }
-    return isEmailReady(c);
+    return true;
   }).length;
 
   function renderPreviewHtml(content: string) {
@@ -171,6 +203,7 @@ export default function NewCampaignPage() {
         customSubject: customSubject || undefined,
         customBody: customBody || undefined,
         tag: tag || undefined,
+        excludeAlreadyEmailed,
         rateLimitPerSecond: rate,
         scheduledAt: scheduledAt
           ? new Date(scheduledAt).toISOString()
@@ -247,9 +280,24 @@ export default function NewCampaignPage() {
                     </option>
                   ))}
                 </select>
+                <label className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-[11px] text-emerald-950">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-3.5 w-3.5 rounded border-emerald-400"
+                    checked={excludeAlreadyEmailed}
+                    onChange={(e) => setExcludeAlreadyEmailed(e.target.checked)}
+                  />
+                  <span>
+                    <strong>Only leads not yet emailed</strong>
+                    {alreadyEmailedCount > 0
+                      ? ` — hides ${alreadyEmailedCount} contact${alreadyEmailedCount === 1 ? "" : "s"} who already received a send`
+                      : " — skips anyone who already got an email from a past campaign"}
+                    . Leave this on so yesterday&apos;s recipients are not emailed again.
+                  </span>
+                </label>
                 <p className="text-[11px] text-zinc-500">
                   Scraped lists appear after <strong>Save to Clients</strong> in Email Finder.
-                  CSV imports appear under their tags.
+                  CSV imports appear under their tags. Counts above update when the filter is on.
                 </p>
                 {audienceOptions.length <= 1 ? (
                   <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5">

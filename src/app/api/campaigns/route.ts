@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/api";
+import { getAlreadyEmailedContactIds } from "@/lib/email/already-emailed";
 
 const createSchema = z.object({
   name: z.string().min(2),
@@ -10,6 +11,8 @@ const createSchema = z.object({
   customSubject: z.string().optional(),
   customBody: z.string().optional(),
   tag: z.string().optional(),
+  /** When true (default), skip contacts who already received an outbound email. */
+  excludeAlreadyEmailed: z.boolean().default(true),
   rateLimitPerSecond: z.number().int().min(1).max(80).optional(),
   variableMapping: z.record(z.string(), z.string()).optional(),
   scheduledAt: z.string().datetime().optional(),
@@ -54,7 +57,7 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const contacts = await prisma.contact.findMany({
+  let contacts = await prisma.contact.findMany({
     where: {
       emailOptedOut: false,
       email: { not: null },
@@ -62,9 +65,22 @@ export async function POST(req: NextRequest) {
     },
   });
 
+  let skippedAlreadyEmailed = 0;
+  if (parsed.data.excludeAlreadyEmailed) {
+    const alreadyEmailed = await getAlreadyEmailedContactIds();
+    const before = contacts.length;
+    contacts = contacts.filter((c) => !alreadyEmailed.has(c.id));
+    skippedAlreadyEmailed = before - contacts.length;
+  }
+
   if (!contacts.length) {
     return NextResponse.json(
-      { error: "No contacts with email found for this target audience" },
+      {
+        error: parsed.data.excludeAlreadyEmailed
+          ? "No unsent leads left in this list — everyone here already received an email."
+          : "No contacts with email found for this target audience",
+        skippedAlreadyEmailed,
+      },
       { status: 400 },
     );
   }
@@ -82,7 +98,11 @@ export async function POST(req: NextRequest) {
       templateId: template.id,
       rateLimitPerSecond: parsed.data.rateLimitPerSecond || 10,
       variableMapping: parsed.data.variableMapping || {},
-      audienceFilter: parsed.data.tag ? { tag: parsed.data.tag } : undefined,
+      audienceFilter: {
+        ...(parsed.data.tag ? { tag: parsed.data.tag } : {}),
+        excludeAlreadyEmailed: parsed.data.excludeAlreadyEmailed,
+        skippedAlreadyEmailed,
+      },
       totalCount: contacts.length,
       status: isScheduled ? "SCHEDULED" : "DRAFT",
       scheduledAt: isScheduled ? scheduledAt : undefined,
