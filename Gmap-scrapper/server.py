@@ -1,14 +1,16 @@
 """
-Google Maps Lead Scraper — HTTP service for the WhatsApp Bulk app
-================================================================
-Runs the headless scraper as a background job and exposes status / CSV.
+Email Finder — HTTP service for the WhatsApp Bulk app
+=====================================================
+Discovers business websites via Google Maps / Google / Bing search,
+then extracts contact emails from each site.
 
 Run (from the Gmap-scrapper folder):
   .venv/bin/python server.py          (or from the app root: npm run scraper)
 
 Endpoints
 ─────────
-  POST /api/scrape          body: {"query": "...", "includeEmails": true, "maxLeads": 300}
+  POST /api/scrape          body: {"query": "...", "source": "all", "maxLeads": 300}
+                            source: maps | google | bing | all
                             → {"jobId": "..."}   (409 if a job is already running)
   GET  /api/jobs/<id>       → {"status", "leads": [...], "stats", "error"}
   GET  /api/jobs/<id>/csv   → CSV download (attachment)
@@ -24,11 +26,10 @@ import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import maps_scraper
+import email_finder
 import exporter
 
 # Keep the terminal output quiet when running as a service.
-maps_scraper.console.quiet = True
 exporter.console.quiet = True
 
 HOST = os.environ.get("SCRAPER_HOST", "0.0.0.0")
@@ -42,12 +43,14 @@ def _job_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
-def _make_job(query: str, include_emails: bool, max_leads: int) -> dict:
+def _make_job(query: str, source: str, max_leads: int, skip_emails: list, skip_domains: list) -> dict:
     job = {
         "id": _job_id(),
         "query": query,
-        "includeEmails": include_emails,
+        "source": source,
         "maxLeads": max_leads,
+        "skipEmails": skip_emails,
+        "skipDomains": skip_domains,
         "status": "running",
         "leads": [],
         "error": None,
@@ -64,11 +67,13 @@ def _run_job(job: dict) -> None:
 
     try:
         asyncio.run(
-            maps_scraper.scrape_google_maps(
+            email_finder.run_email_finder(
                 job["query"],
-                include_emails=job["includeEmails"],
+                source=job["source"],
                 max_leads=job["maxLeads"],
                 on_lead=on_lead,
+                skip_emails=job.get("skipEmails") or [],
+                skip_domains=job.get("skipDomains") or [],
             )
         )
         with LOCK:
@@ -88,8 +93,9 @@ def _job_summary(job: dict) -> dict:
         "error": job["error"],
         "stats": {
             "found": len(leads),
-            "withPhone": sum(1 for l in leads if getattr(l, "phone", "")),
+            "withWebsite": sum(1 for l in leads if getattr(l, "website", "")),
             "withEmail": sum(1 for l in leads if getattr(l, "email", "")),
+            "withPhone": sum(1 for l in leads if getattr(l, "phone", "")),
         },
         "leads": [l.to_dict() for l in leads],
     }
@@ -167,14 +173,25 @@ class Handler(BaseHTTPRequestHandler):
             _send_json(self, {"error": "Query must be at least 3 characters"}, 400)
             return
 
-        include_emails = bool(body.get("includeEmails", True))
+        source = (body.get("source") or "all").strip().lower()
+        if source not in ("maps", "google", "bing", "all"):
+            source = "all"
         try:
             max_leads = int(body.get("maxLeads", 300))
         except (TypeError, ValueError):
             max_leads = 300
         max_leads = max(10, min(max_leads, 1000))
 
-        job = _make_job(query, include_emails, max_leads)
+        skip_emails = body.get("skipEmails") or []
+        skip_domains = body.get("skipDomains") or []
+        if not isinstance(skip_emails, list):
+            skip_emails = []
+        if not isinstance(skip_domains, list):
+            skip_domains = []
+        skip_emails = [str(e).strip().lower() for e in skip_emails if e and "@" in str(e)][:50000]
+        skip_domains = [str(d).strip().lower() for d in skip_domains if d][:50000]
+
+        job = _make_job(query, source, max_leads, skip_emails, skip_domains)
         t = threading.Thread(target=_run_job, args=(job,), daemon=True)
         t.start()
         _send_json(self, {"jobId": job["id"]}, 202)
@@ -222,7 +239,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    print(f"Lead scraper service on http://{HOST}:{PORT}  (Ctrl+C to stop)")
+    print(f"Email finder service on http://{HOST}:{PORT}  (Ctrl+C to stop)")
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     try:
         server.serve_forever()

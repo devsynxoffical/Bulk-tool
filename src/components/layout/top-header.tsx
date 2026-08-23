@@ -12,7 +12,7 @@ const titles: Record<string, { title: string; crumb: string }> = {
   "/compose": { title: "Compose Email", crumb: "Direct Email" },
   "/campaigns": { title: "Cold Campaigns", crumb: "Outreach" },
   "/campaigns/new": { title: "New Campaign", crumb: "Cold Outreach" },
-  "/leads": { title: "Lead Finder", crumb: "Scraped Leads" },
+  "/leads": { title: "Email Finder", crumb: "Discover Emails" },
   "/verifier": { title: "Email Verifier", crumb: "Lead Validation" },
   "/contacts": { title: "Client Database", crumb: "Audience" },
   "/templates": { title: "Email Templates", crumb: "Templates" },

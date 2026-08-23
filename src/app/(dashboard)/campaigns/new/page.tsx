@@ -102,6 +102,7 @@ export default function NewCampaignPage() {
       .map(([value, count]) => {
         const scraped =
           value === "maps-leads" ||
+          value === "email-leads" ||
           value.toLowerCase().includes("maps") ||
           value.toLowerCase().includes("scrape");
         return {
@@ -247,7 +248,7 @@ export default function NewCampaignPage() {
                   ))}
                 </select>
                 <p className="text-[11px] text-zinc-500">
-                  Scraped lists appear after <strong>Import to Database</strong> in Lead Finder.
+                  Scraped lists appear after <strong>Save to Clients</strong> in Email Finder.
                   CSV imports appear under their tags.
                 </p>
                 {audienceOptions.length <= 1 ? (

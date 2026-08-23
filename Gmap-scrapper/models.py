@@ -22,14 +22,17 @@ class Lead:
     longitude: Optional[float] = None
     google_maps_url: str = ""
     place_id: str = ""
+    source: str = ""
 
     def to_dict(self) -> dict:
         return {
             "Name": self.name,
-            "Category": self.category,
-            "Phone": self.phone,
             "Email": self.email,
             "Website": self.website,
+            "Source": self.source,
+            # Legacy fields kept empty for CSV/import compatibility
+            "Category": self.category,
+            "Phone": self.phone,
             "Address": self.address,
             "Rating": self.rating if self.rating else "",
             "Reviews": self.review_count,

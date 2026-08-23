@@ -21,7 +21,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import type { ScrapeJob, ScrapedLead } from "@/lib/scraper";
+import type { ScrapeJob, ScrapedLead, ScrapeSource } from "@/lib/scraper";
 
 const POLL_MS = 3000;
 
@@ -29,7 +29,7 @@ export default function LeadFinderPage() {
   const [offline, setOffline] = useState(false);
   const [query, setQuery] = useState("");
   const [maxLeads, setMaxLeads] = useState(300);
-  const [includeEmails, setIncludeEmails] = useState(true);
+  const [source, setSource] = useState<ScrapeSource>("all");
 
   const [jobId, setJobId] = useState<string | null>(null);
   const [job, setJob] = useState<ScrapeJob | null>(null);
@@ -139,7 +139,7 @@ export default function LeadFinderPage() {
       const res = await fetch("/api/scraper/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, includeEmails, maxLeads }),
+        body: JSON.stringify({ query, source, maxLeads }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -188,15 +188,15 @@ export default function LeadFinderPage() {
   return (
     <div>
       <PageHeader
-        title="Lead Finder"
-        description="Search an area on Google Maps and pull business names, emails, and phone numbers into a CSV."
+        title="Email Finder"
+        description="Search a niche or location, discover business websites via Google Maps and web search, then extract contact emails automatically."
       />
 
       {offline ? (
         <Card className="mb-4 border-amber-200 bg-amber-50/60">
           <CardContent className="flex flex-wrap items-center justify-between gap-3 py-3">
             <p className="text-sm text-amber-800">
-              The lead scraper service isn&apos;t running. Start it in a separate
+              The email finder service isn&apos;t running. Start it in a separate
               terminal with <code className="rounded bg-amber-100 px-1">npm run scraper</code>,
               then retry.
             </p>
@@ -211,10 +211,10 @@ export default function LeadFinderPage() {
       <form onSubmit={start} className="space-y-4">
         <Card>
           <CardHeader>
-            <CardTitle>Search an area</CardTitle>
+            <CardTitle>Find business emails</CardTitle>
             <CardDescription>
-              Examples: &quot;dentists in Lahore&quot;, &quot;restaurants near
-              Model Town&quot;, &quot;real estate agents in Islamabad&quot;.
+              Examples: &quot;real estate in Islamabad&quot;, &quot;dental clinics Lahore&quot;,
+              &quot;marketing agencies Karachi&quot;.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -223,7 +223,7 @@ export default function LeadFinderPage() {
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="dentists in Lahore"
+                placeholder="real estate in Islamabad"
                 required
                 minLength={3}
               />
@@ -231,7 +231,19 @@ export default function LeadFinderPage() {
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label>Max leads</Label>
+                <Label>Discovery source</Label>
+                <Select
+                  value={source}
+                  onChange={(e) => setSource(e.target.value as ScrapeSource)}
+                >
+                  <option value="all">All — Maps + Google + Bing</option>
+                  <option value="maps">Google Maps (websites only)</option>
+                  <option value="google">Google Search</option>
+                  <option value="bing">Bing Search</option>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Max websites</Label>
                 <Select
                   value={maxLeads}
                   onChange={(e) => setMaxLeads(Number(e.target.value))}
@@ -239,18 +251,15 @@ export default function LeadFinderPage() {
                   <option value={100}>100</option>
                   <option value={300}>300</option>
                   <option value={500}>500</option>
+                  <option value={1000}>1000 (max per run)</option>
                 </Select>
               </div>
-              <label className="flex items-center gap-2 pt-6 text-sm text-zinc-700">
-                <input
-                  type="checkbox"
-                  checked={includeEmails}
-                  onChange={(e) => setIncludeEmails(e.target.checked)}
-                  className="h-4 w-4 rounded border-zinc-300"
-                />
-                Find email addresses (visits business websites — slower)
-              </label>
             </div>
+
+            <p className="text-xs text-zinc-500">
+              Duplicates are blocked automatically — same email or website is never scraped twice
+              if it is already in your Client Database.
+            </p>
 
             <div className="flex gap-2">
               <Button type="submit" disabled={starting || running}>
@@ -259,7 +268,7 @@ export default function LeadFinderPage() {
                 ) : (
                   <Search className="h-4 w-4" />
                 )}
-                {running ? "Searching…" : starting ? "Starting…" : "Find leads"}
+                {running ? "Finding emails…" : starting ? "Starting…" : "Find emails"}
               </Button>
             </div>
           </CardContent>
@@ -275,11 +284,11 @@ export default function LeadFinderPage() {
                 <span className="relative inline-flex h-3 w-3 rounded-full bg-blue-500"></span>
               </span>
               <span>
-                Scraping session active for <strong>&quot;{job?.query}&quot;</strong>. You can navigate freely — progress is saved automatically!
+                Scraping session active for <strong>&quot;{job?.query}&quot;</strong>. Progress saves automatically.
               </span>
             </div>
             <span className="text-xs text-blue-700 font-medium">
-              {job?.stats.found || 0} leads found
+              {job?.stats.found || 0} processed · {job?.stats.withEmail || 0} emails
             </span>
           </CardContent>
         </Card>
@@ -306,11 +315,14 @@ export default function LeadFinderPage() {
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div className="grid flex-1 gap-3 sm:grid-cols-3">
               <StatCard
-                label="Leads found"
+                label="Websites checked"
                 value={job.stats.found}
-                hint={running ? "Still searching…" : undefined}
+                hint={running ? "Still running…" : undefined}
               />
-              <StatCard label="With phone" value={job.stats.withPhone} />
+              <StatCard
+                label="With website"
+                value={job.stats.withWebsite ?? job.stats.found}
+              />
               <StatCard label="With email" value={job.stats.withEmail} />
             </div>
             {job.status === "done" ? (
@@ -361,18 +373,17 @@ export default function LeadFinderPage() {
               {job.leads.length === 0 ? (
                 <p className="px-4 py-8 text-center text-sm text-zinc-500">
                   {running
-                    ? "Searching Google Maps…"
-                    : "No results yet — try a different search."}
+                    ? "Discovering websites and extracting emails…"
+                    : "No results yet — try a different search or source."}
                 </p>
               ) : (
-                <table className="w-full min-w-[760px] text-left text-sm">
+                <table className="w-full min-w-[680px] text-left text-sm">
                   <thead className="border-b border-zinc-100 bg-zinc-50/80 text-[11px] uppercase tracking-wide text-zinc-500">
                     <tr>
-                      <th className="px-4 py-3 font-medium">Name</th>
-                      <th className="px-4 py-3 font-medium">Phone</th>
+                      <th className="px-4 py-3 font-medium">Company</th>
+                      <th className="px-4 py-3 font-medium">Website</th>
                       <th className="px-4 py-3 font-medium">Email</th>
-                      <th className="px-4 py-3 font-medium">Category</th>
-                      <th className="px-4 py-3 font-medium">Rating</th>
+                      <th className="px-4 py-3 font-medium">Source</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -388,7 +399,7 @@ export default function LeadFinderPage() {
           {job.status === "done" ? (
             <p className="flex items-start gap-2 rounded-md border border-zinc-100 bg-zinc-50 px-3 py-2 text-xs text-zinc-500">
               <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-400" />
-              Saved leads are added to Clients under the tag “{job.query}”. Open{" "}
+              Saved contacts are tagged “{job.query}” and “email-leads”. Open{" "}
               <Link href="/campaigns/new" className="mx-0.5 underline">
                 Campaigns
               </Link>{" "}
@@ -402,27 +413,27 @@ export default function LeadFinderPage() {
 }
 
 function LeadRow({ lead }: { lead: ScrapedLead }) {
-  const phone = lead.Phone;
   const email = lead.Email;
   const website = lead.Website;
+  const company = lead.Name || "—";
+  const source = lead.Source || "—";
 
   return (
     <tr className="border-b border-zinc-50 last:border-0">
-      <td className="px-4 py-3">
-        <p className="font-medium text-zinc-900">{lead.Name}</p>
+      <td className="px-4 py-3 font-medium text-zinc-900">{company}</td>
+      <td className="px-4 py-3 text-xs text-zinc-600">
         {website ? (
           <a
-            href={website}
+            href={website.startsWith("http") ? website : `https://${website}`}
             target="_blank"
             rel="noreferrer"
-            className="text-[11px] text-blue-600 hover:underline"
+            className="text-blue-600 hover:underline"
           >
             {website.replace(/^https?:\/\//, "")}
           </a>
-        ) : null}
-      </td>
-      <td className="px-4 py-3 font-mono text-xs text-zinc-600">
-        {phone || "—"}
+        ) : (
+          "—"
+        )}
       </td>
       <td className="px-4 py-3 font-mono text-xs text-zinc-600">
         {email ? (
@@ -433,10 +444,7 @@ function LeadRow({ lead }: { lead: ScrapedLead }) {
           "—"
         )}
       </td>
-      <td className="px-4 py-3 text-xs text-zinc-500">{lead.Category || "—"}</td>
-      <td className="px-4 py-3 text-xs text-zinc-500">
-        {lead.Rating ? `★ ${lead.Rating}` : "—"}
-      </td>
+      <td className="px-4 py-3 text-xs capitalize text-zinc-500">{source}</td>
     </tr>
   );
 }

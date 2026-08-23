@@ -24,7 +24,7 @@ const nav = [
   { href: "/compose", label: "Compose Email", icon: PenSquare },
   { href: "/campaigns", label: "Outreach Campaigns", icon: Megaphone },
   { href: "/templates", label: "Email Templates", icon: FileText },
-  { href: "/leads", label: "Lead Finder & Scraper", icon: Search },
+  { href: "/leads", label: "Email Finder", icon: Search },
   { href: "/verifier", label: "Email Verifier", icon: ShieldCheck },
   { href: "/contacts", label: "Client Database", icon: Users },
   { href: "/mailboxes", label: "Sending Mailboxes", icon: Inbox },

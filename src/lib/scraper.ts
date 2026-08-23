@@ -2,12 +2,16 @@ import { z } from "zod";
 
 const SCRAPER_URL = process.env.SCRAPER_URL || "http://127.0.0.1:8787";
 
+export const scrapeSourceSchema = z.enum(["maps", "google", "bing", "all"]);
+export type ScrapeSource = z.infer<typeof scrapeSourceSchema>;
+
 export const scrapedLeadSchema = z.object({
-  Name: z.string(),
+  Name: z.string().optional().default(""),
   Category: z.string().optional().default(""),
   Phone: z.string().optional().default(""),
   Email: z.string().optional().default(""),
   Website: z.string().optional().default(""),
+  Source: z.string().optional().default(""),
   Address: z.string().optional().default(""),
   Rating: z.union([z.number(), z.string()]).optional().default(""),
   Reviews: z.union([z.number(), z.string()]).optional().default(""),
@@ -23,8 +27,9 @@ export type ScrapedLead = z.infer<typeof scrapedLeadSchema>;
 
 export type ScrapeStats = {
   found: number;
-  withPhone: number;
+  withWebsite: number;
   withEmail: number;
+  withPhone?: number;
 };
 
 export type ScrapeJob = {
@@ -64,10 +69,29 @@ export async function checkScraperHealth(): Promise<boolean> {
   }
 }
 
+export async function fetchScrapeExclusions(): Promise<{
+  emails: string[];
+  domains: string[];
+}> {
+  try {
+    const res = await fetch("/api/scraper/exclusions", { cache: "no-store" });
+    if (!res.ok) return { emails: [], domains: [] };
+    const data = await res.json();
+    return {
+      emails: Array.isArray(data.emails) ? data.emails : [],
+      domains: Array.isArray(data.domains) ? data.domains : [],
+    };
+  } catch {
+    return { emails: [], domains: [] };
+  }
+}
+
 export async function startScrape(params: {
   query: string;
-  includeEmails: boolean;
+  source: ScrapeSource;
   maxLeads: number;
+  skipEmails?: string[];
+  skipDomains?: string[];
 }): Promise<{ jobId: string }> {
   return proxy("/api/scrape", {
     method: "POST",
@@ -82,4 +106,3 @@ export async function getScrapeJob(jobId: string): Promise<ScrapeJob> {
 export async function getActiveScrapeJob(): Promise<{ active: boolean; job: ScrapeJob | null }> {
   return proxy<{ active: boolean; job: ScrapeJob | null }>("/api/jobs/active");
 }
-

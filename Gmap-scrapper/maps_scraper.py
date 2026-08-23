@@ -25,7 +25,7 @@ from rich.progress import (
 )
 
 from models import Lead
-from email_scraper import find_email_on_site
+from email_scraper import find_email_on_site, normalize_domain
 import config
 
 console = Console()
@@ -82,8 +82,11 @@ class GoogleMapsScraper:
         self._seen_keys: set[str] = set()
         self._seen_hrefs: set[str] = set()
         self.include_emails: bool = False
+        self.website_only: bool = False
         self._email_visits: int = 0
         self.on_lead = None
+        self.on_website = None
+        self._seen_domains: set[str] = set()
 
     async def deep_scrape(
         self,
@@ -200,6 +203,22 @@ class GoogleMapsScraper:
         )
         return self.leads
 
+    async def scrape_websites(
+        self,
+        query: str,
+        max_leads: int | None = None,
+        on_website=None,
+        skip_domains: set[str] | None = None,
+    ) -> list[str]:
+        """Google Maps — collect business websites only (no phone/address/rating)."""
+        self.website_only = True
+        self.include_emails = False
+        self.on_website = on_website
+        self._skip_domains = skip_domains or set()
+        console.print(f"\n[bold cyan]🗺 Maps website discovery:[/] [yellow]{query}[/]\n")
+        await self._run_search(query, max_leads)
+        return [lead.website for lead in self.leads if lead.website]
+
     async def scrape(
         self,
         query: str,
@@ -208,9 +227,14 @@ class GoogleMapsScraper:
         on_lead=None,
     ) -> list[Lead]:
         self.include_emails = include_emails
+        self.website_only = False
         self.on_lead = on_lead
         console.print(f"\n[bold cyan]🔍 Searching:[/] [yellow]{query}[/]\n")
+        await self._run_search(query, max_leads)
+        console.print(f"\n[bold green]✅ Scraped {len(self.leads)} unique leads[/]\n")
+        return self.leads
 
+    async def _run_search(self, query: str, max_leads: int | None = None) -> None:
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(headless=True)
             ctx = await browser.new_context(
@@ -237,9 +261,6 @@ class GoogleMapsScraper:
                 console.print(f"[bold red]❌ Error: {e}[/]")
             finally:
                 await browser.close()
-
-        console.print(f"\n[bold green]✅ Scraped {len(self.leads)} unique leads[/]\n")
-        return self.leads
 
     async def _open(self, page: Page):
         console.print("[dim]  → Opening Google Maps (headless)…[/]")
@@ -371,6 +392,30 @@ class GoogleMapsScraper:
                     try:
                         await worker_page.goto(href, wait_until="domcontentloaded", timeout=15_000)
                         await asyncio.sleep(random.uniform(config.DETAIL_DELAY_MIN, config.DETAIL_DELAY_MAX))
+
+                        if self.website_only:
+                            website = await self._extract_website_only(worker_page)
+                            if not website:
+                                return
+                            domain = normalize_domain(website)
+                            if not domain:
+                                return
+                            async with lock:
+                                if domain in self._seen_domains:
+                                    return
+                                if domain in getattr(self, "_skip_domains", set()):
+                                    return
+                                self._seen_domains.add(domain)
+                                lead = Lead(website=website, source="maps")
+                                self.leads.append(lead)
+                                if self.on_website:
+                                    try:
+                                        self.on_website(website)
+                                    except Exception:
+                                        pass
+                                prog.update(task, description=f"✔ {domain[:40]}")
+                            return
+
                         lead = await self._extract_one(worker_page, href)
 
                         if lead and lead.name:
@@ -416,6 +461,33 @@ class GoogleMapsScraper:
                 await p.close()
             except Exception:
                 pass
+
+    async def _extract_website_only(self, page: Page) -> str:
+        """Extract only the business website URL from a Maps listing page."""
+        try:
+            btns = page.locator(SEL_INFO_BTN)
+            for j in range(await btns.count()):
+                btn = btns.nth(j)
+                iid = (await btn.get_attribute("data-item-id")) or ""
+                aria = (await btn.get_attribute("aria-label")) or ""
+                if iid.startswith("authority") or "website" in aria.lower():
+                    site = aria.replace("Website: ", "").strip()
+                    if site and not site.startswith("http"):
+                        site = "https://" + site.lstrip("/")
+                    if site:
+                        return site
+
+            el = page.locator(SEL_INFO_LINK)
+            for j in range(await el.count()):
+                link = el.nth(j)
+                iid = (await link.get_attribute("data-item-id")) or ""
+                if iid.startswith("authority"):
+                    href = (await link.get_attribute("href")) or ""
+                    if href:
+                        return href
+        except Exception:
+            pass
+        return ""
 
     async def _extract_one(self, page: Page, url: str) -> Lead | None:
         lead = Lead(google_maps_url=url)
@@ -488,6 +560,17 @@ class GoogleMapsScraper:
             return lead
         except Exception:
             return None
+
+
+async def scrape_google_maps_websites(
+    query: str,
+    max_leads: int | None = None,
+    on_website=None,
+    skip_domains: set[str] | None = None,
+) -> list[str]:
+    """Maps listing scroll — returns unique business website URLs only."""
+    scraper = GoogleMapsScraper()
+    return await scraper.scrape_websites(query, max_leads, on_website, skip_domains)
 
 
 async def scrape_google_maps(

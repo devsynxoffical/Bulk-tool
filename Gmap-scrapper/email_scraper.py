@@ -5,8 +5,8 @@ and falls back to Playwright browser if needed.
 
 from __future__ import annotations
 
-import asyncio
 import re
+from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -67,6 +67,49 @@ def _parse(html: str) -> list[str]:
     return out
 
 
+@dataclass
+class SiteScrapeResult:
+    website: str = ""
+    email: str = ""
+    company_name: str = ""
+
+
+def normalize_domain(url: str) -> str:
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    if not raw.startswith("http"):
+        raw = "https://" + raw
+    try:
+        host = urlparse(raw).netloc.lower()
+    except ValueError:
+        return ""
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
+def domain_to_company(host: str) -> str:
+    if not host:
+        return ""
+    base = host.split(".")[0]
+    base = re.sub(r"[-_]+", " ", base)
+    return base.strip().title()
+
+
+def _title_from_html(html: str) -> str:
+    m = re.search(r"<title[^>]*>([^<]+)</title>", html, re.I)
+    if not m:
+        return ""
+    title = re.sub(r"\s+", " ", m.group(1)).strip()
+    for sep in ("|", "–", "-", "·", ":"):
+        if sep in title:
+            title = title.split(sep)[0].strip()
+    if len(title) > 80:
+        title = title[:80].strip()
+    return title
+
+
 def _should_skip(host: str) -> bool:
     base = host.lower()
     if base.startswith("www."):
@@ -76,23 +119,30 @@ def _should_skip(host: str) -> bool:
     return any(base.endswith("." + s) for s in SKIP_HOSTS)
 
 
-async def find_email_on_site(page, website_url: str, timeout_ms: int = 5_000) -> str:
+async def scrape_site_for_email(
+    page,
+    website_url: str,
+    timeout_ms: int = 5_000,
+) -> SiteScrapeResult:
     """
-    Visit a business website + contact pages asynchronously, returning the first valid email found.
-    Uses ultra-fast async HTTP (httpx) first, with fallback to Playwright page navigation.
+    Visit a business website + contact pages, returning email and company name.
+    Uses httpx first, Playwright as fallback.
     """
     url = (website_url or "").strip()
     if not url:
-        return ""
+        return SiteScrapeResult()
     if not url.startswith("http"):
         url = "https://" + url
 
     try:
         host = urlparse(url).netloc
     except ValueError:
-        return ""
+        return SiteScrapeResult()
     if not host or _should_skip(host):
-        return ""
+        return SiteScrapeResult()
+
+    domain = normalize_domain(url)
+    result = SiteScrapeResult(website=url, company_name=domain_to_company(domain))
 
     headers = {
         "User-Agent": (
@@ -103,7 +153,6 @@ async def find_email_on_site(page, website_url: str, timeout_ms: int = 5_000) ->
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     }
 
-    # ── 1. Fast HTTP Async Fetch ─────────────────────────────────────
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(timeout_ms / 1000.0, connect=3.0),
@@ -115,24 +164,41 @@ async def find_email_on_site(page, website_url: str, timeout_ms: int = 5_000) ->
                 target = urljoin(url, path) if path else url
                 try:
                     res = await client.get(target)
-                    if res.status_code == 200:
-                        emails = _parse(res.text)
-                        if emails:
-                            return emails[0]
+                    if res.status_code != 200:
+                        continue
+                    title = _title_from_html(res.text)
+                    if title and not result.company_name:
+                        result.company_name = title
+                    elif title and result.company_name == domain_to_company(domain):
+                        result.company_name = title
+                    emails = _parse(res.text)
+                    if emails:
+                        result.email = emails[0]
+                        result.website = str(res.url)
+                        return result
                 except Exception:
                     continue
     except Exception:
         pass
 
-    # ── 2. Fallback to Playwright Page ─────────────────────────────────
     if page:
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
             html = await page.content()
+            title = _title_from_html(html)
+            if title:
+                result.company_name = title
             emails = _parse(html)
             if emails:
-                return emails[0]
+                result.email = emails[0]
+                result.website = page.url
         except Exception:
             pass
 
-    return ""
+    return result
+
+
+async def find_email_on_site(page, website_url: str, timeout_ms: int = 5_000) -> str:
+    """Backward-compatible wrapper."""
+    scraped = await scrape_site_for_email(page, website_url, timeout_ms=timeout_ms)
+    return scraped.email

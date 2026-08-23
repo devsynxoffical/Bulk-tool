@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/api";
 import { normalizePhone } from "@/lib/utils";
 import { scrapedLeadSchema } from "@/lib/scraper";
+import { isValidRecipientEmail } from "@/lib/email/bounce-handler";
 
 const schema = z.object({
   query: z.string().min(1),
@@ -29,12 +30,12 @@ export async function POST(req: NextRequest) {
 
   try {
     for (const row of leads) {
-      const name = row.Name ? row.Name.trim() : null;
+      const name = row.Name ? row.Name.trim() : companyFromWebsite(row.Website);
       const phoneRaw = row.Phone ? row.Phone.trim() : null;
       const phone = phoneRaw ? normalizePhone(phoneRaw) : null;
 
       let email = row.Email ? row.Email.trim().toLowerCase() : null;
-      if (email && (!email.includes("@") || email.length < 5)) {
+      if (email && !isValidRecipientEmail(email)) {
         email = null;
       }
 
@@ -96,14 +97,15 @@ export async function POST(req: NextRequest) {
 
         const targetContact = existingByPhone || existingByEmail;
         const currentTags = targetContact?.tags ?? [];
-        const tags = Array.from(new Set([...currentTags, tag, "maps-leads"]));
+        const tags = Array.from(new Set([...currentTags, tag, "email-leads", "maps-leads"]));
 
         const customFields = {
           company: name || "",
-          city: cityFromAddress(row.Address),
+          city: cityFromAddress(row.Address) || cityFromQuery(tag),
           website: row.Website || null,
           address: row.Address || null,
           category: row.Category || null,
+          source: row.Source || null,
         };
 
         if (targetContact) {
@@ -162,4 +164,20 @@ function cityFromAddress(address: string | undefined | null): string {
   const parts = address.split(",").map((p) => p.trim()).filter(Boolean);
   if (parts.length >= 2) return parts[parts.length - 2] || parts[parts.length - 1] || "";
   return parts[0] || "";
+}
+
+function cityFromQuery(query: string): string {
+  const m = query.match(/\bin\s+([A-Za-z\s]+)$/i);
+  return m?.[1]?.trim() || "";
+}
+
+function companyFromWebsite(website: string | undefined | null): string {
+  if (!website) return "";
+  try {
+    const host = new URL(website.startsWith("http") ? website : `https://${website}`).hostname;
+    const base = host.replace(/^www\./, "").split(".")[0];
+    return base.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  } catch {
+    return "";
+  }
 }
