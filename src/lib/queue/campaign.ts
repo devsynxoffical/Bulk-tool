@@ -10,10 +10,8 @@ import {
   computeSpreadDelayMs,
   getThrottleDelayMs,
 } from "@/lib/email/throttle";
-import {
-  HEALTH_PENALTY_AUTH_FAILURE,
-  WORKER_CONCURRENCY,
-} from "@/lib/email/constants";
+import { WORKER_CONCURRENCY } from "@/lib/email/constants";
+import { applyAuthFailureHealthCap } from "@/lib/email/health";
 import {
   checkDailyReset,
   getMsUntilInboxAvailable,
@@ -231,6 +229,7 @@ export async function processCampaignJob(
         conversationId: conversation.id,
         contactId: recipient.contactId,
         campaignId,
+        inboxId: sendingInbox.id,
         channel: "EMAIL",
         direction: "OUTBOUND",
         type: "email",
@@ -247,6 +246,7 @@ export async function processCampaignJob(
       data: {
         status: "SENT",
         messageId: message.id,
+        inboxId: sendingInbox.id,
         sentAt: new Date(),
       },
     });
@@ -266,12 +266,7 @@ export async function processCampaignJob(
     // Wrong mailbox password — skip this inbox, retry lead on a different mailbox
     if (isSmtpAuthFailure(message)) {
       try {
-        await prisma.emailAccount.update({
-          where: { id: sendingInbox.id },
-          data: {
-            healthScore: { decrement: HEALTH_PENALTY_AUTH_FAILURE },
-          },
-        });
+        await applyAuthFailureHealthCap(sendingInbox.id);
       } catch {
         /* non-fatal */
       }

@@ -22,8 +22,20 @@ export const BOUNCE_RATE_PAUSE_THRESHOLD = 0.05;
 /** Health score penalty per hard bounce. */
 export const HEALTH_PENALTY_PER_BOUNCE = 15;
 
-/** Drop inbox below rotator threshold on SMTP auth failure (535). */
+/** Soft-cap health on SMTP auth failure (535) — no longer stacks forever. */
 export const HEALTH_PENALTY_AUTH_FAILURE = 70;
+
+/**
+ * Open rate that maps to 100 health (cold email: ~20% open is excellent).
+ * health = min(100, round((openRate / TARGET) * 100))
+ */
+export const OPEN_RATE_HEALTH_TARGET = 0.2;
+
+/** Minimum sends before open-rate health replaces the default score. */
+export const OPEN_RATE_MIN_SAMPLE = 10;
+
+/** Lookback window (days) for open-rate health. */
+export const OPEN_RATE_LOOKBACK_DAYS = 30;
 
 /** Minimum seconds between campaign job enqueue (stagger worker pickup). */
 export const JOB_STAGGER_MIN_SEC = 3;

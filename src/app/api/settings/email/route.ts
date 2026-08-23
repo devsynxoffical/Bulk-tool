@@ -12,6 +12,7 @@ import {
   resolveWarmupContext,
 } from "@/lib/email/warmup";
 import { restartMailboxWarmup } from "@/lib/email/warmup-sync";
+import { getInboxOpenStats, recalculateInboxHealth } from "@/lib/email/health";
 
 const createSchema = z.object({
   id: z.string().optional(),
@@ -64,8 +65,16 @@ function formatAccount(
       isVerified: boolean;
     } | null;
   },
+  openStats?: {
+    sent: number;
+    opened: number;
+    openRate: number;
+    healthScore: number;
+    sampleReady: boolean;
+  },
 ) {
   const warmup = resolveWarmupContext(acc);
+  const healthScore = openStats?.healthScore ?? Math.max(0, Math.min(100, acc.healthScore ?? 100));
   return {
     id: acc.id,
     provider: "SMTP",
@@ -82,7 +91,11 @@ function formatAccount(
     dailyLimit: acc.dailyLimit || DEFAULT_INBOX_DAILY_LIMIT,
     effectiveDailyLimit: warmup.effectiveDailyLimit,
     sentToday: acc.sentToday || 0,
-    healthScore: acc.healthScore || 100,
+    healthScore,
+    openRate: openStats ? Math.round(openStats.openRate * 1000) / 10 : null,
+    opensTracked: openStats?.opened ?? null,
+    sendsTracked: openStats?.sent ?? null,
+    openSampleReady: openStats?.sampleReady ?? false,
     warmupEnabled: acc.warmupEnabled,
     warmupStage: warmup.stage,
     warmupDay: warmup.warmupDay,
@@ -143,8 +156,29 @@ export async function GET() {
       }),
     );
 
+    // Sync health from open rate (clamped 0–100) and return open stats
+    const formatted = await Promise.all(
+      accounts.map(async (acc) => {
+        let stats;
+        try {
+          // Fix legacy negative health or drift from open-rate formula
+          if (acc.healthScore < 0 || acc.healthScore > 100) {
+            stats = await recalculateInboxHealth(acc.id);
+          } else {
+            stats = await getInboxOpenStats(acc.id);
+            if (stats.sampleReady && stats.healthScore !== acc.healthScore) {
+              stats = await recalculateInboxHealth(acc.id);
+            }
+          }
+        } catch {
+          stats = undefined;
+        }
+        return formatAccount(acc, stats);
+      }),
+    );
+
     return NextResponse.json({
-      accounts: accounts.map(formatAccount),
+      accounts: formatted,
     });
   } catch (e) {
     console.error("GET /api/settings/email error:", e);

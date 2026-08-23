@@ -53,6 +53,10 @@ type EmailAccount = {
   effectiveDailyLimit: number;
   sentToday: number;
   healthScore: number;
+  openRate: number | null;
+  opensTracked: number | null;
+  sendsTracked: number | null;
+  openSampleReady: boolean;
   warmupEnabled: boolean;
   warmupStage: number;
   warmupDay: number;
@@ -407,7 +411,23 @@ export function MailboxManager() {
                     <span>
                       {acc.sentToday}/{acc.effectiveDailyLimit} today
                     </span>
-                    <span>Health {acc.healthScore}%</span>
+                    <span
+                      className={
+                        acc.healthScore < 30
+                          ? "text-red-600 font-medium"
+                          : acc.healthScore < 70
+                            ? "text-amber-700 font-medium"
+                            : "text-emerald-700 font-medium"
+                      }
+                      title={
+                        acc.openSampleReady
+                          ? `Health from open rate (${acc.opensTracked}/${acc.sendsTracked} opens)`
+                          : "Health waits for ~10 tracked sends, then follows open rate"
+                      }
+                    >
+                      Health {acc.healthScore}%
+                      {acc.openRate != null ? ` · Open ${acc.openRate}%` : ""}
+                    </span>
                   </div>
                   {acc.warmupEnabled && !acc.warmupComplete && (
                     <div className="space-y-1.5 pt-1">

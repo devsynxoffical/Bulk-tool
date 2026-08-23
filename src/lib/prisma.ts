@@ -133,6 +133,19 @@ export async function ensureDbSchema() {
       ALTER TABLE "Contact" ADD COLUMN IF NOT EXISTS "emailOptedOut" BOOLEAN NOT NULL DEFAULT false;
     `);
 
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "Message" ADD COLUMN IF NOT EXISTS "inboxId" TEXT;
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "Message_inboxId_idx" ON "Message"("inboxId");
+    `);
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "CampaignRecipient" ADD COLUMN IF NOT EXISTS "inboxId" TEXT;
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "CampaignRecipient_inboxId_idx" ON "CampaignRecipient"("inboxId");
+    `);
+
     isEnsured = true;
   } catch (err) {
     console.error("Auto-schema sync warning:", err);

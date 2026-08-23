@@ -1,8 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import {
-  BOUNCE_RATE_PAUSE_THRESHOLD,
-  HEALTH_PENALTY_PER_BOUNCE,
-} from "./constants";
+import { recalculateInboxHealth } from "./health";
 
 export const BOUNCE_SMTP_PATTERNS =
   /550|552|554|421|mailbox (?:not found|unavailable|disabled)|user unknown|address rejected|recipient rejected|does not exist|no such user|invalid recipient|permanent failure|delivery failed permanently/i;
@@ -101,22 +98,12 @@ export async function recordBounce(params: {
   });
 
   if (params.inboxId) {
-    const inbox = await prisma.emailAccount.update({
+    await prisma.emailAccount.update({
       where: { id: params.inboxId },
-      data: {
-        bounceCount: { increment: 1 },
-        healthScore: { decrement: HEALTH_PENALTY_PER_BOUNCE },
-      },
+      data: { bounceCount: { increment: 1 } },
     });
-
-    const sent = Math.max(inbox.sentToday, 1);
-    const bounceRate = inbox.bounceCount / sent;
-    if (bounceRate >= BOUNCE_RATE_PAUSE_THRESHOLD || inbox.healthScore < 30) {
-      await prisma.emailAccount.update({
-        where: { id: params.inboxId },
-        data: { isActive: false },
-      });
-    }
+    // Health is driven by open rate (+ bounce drag), not stacked −15 forever
+    await recalculateInboxHealth(params.inboxId);
   }
 
   return { ok: true, email, reason };

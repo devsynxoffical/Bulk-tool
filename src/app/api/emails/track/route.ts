@@ -1,5 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { recalculateInboxHealth } from "@/lib/email/health";
+
+const TRANSPARENT_GIF = Buffer.from(
+  "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+  "base64",
+);
+
+async function refreshInboxHealth(inboxId: string | null | undefined) {
+  if (!inboxId) return;
+  try {
+    await recalculateInboxHealth(inboxId);
+  } catch (e) {
+    console.warn("Open-rate health refresh failed:", e);
+  }
+}
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -7,7 +22,6 @@ export async function GET(req: NextRequest) {
 
   if (messageId) {
     try {
-      // Find message by ID or metaMessageId
       const message = await prisma.message.findFirst({
         where: {
           OR: [{ id: messageId }, { metaMessageId: messageId }],
@@ -21,7 +35,6 @@ export async function GET(req: NextRequest) {
             data: { status: "READ" },
           });
 
-          // If associated with a campaign or recipient
           if (message.campaignId) {
             const recipient = await prisma.campaignRecipient.findFirst({
               where: {
@@ -45,6 +58,8 @@ export async function GET(req: NextRequest) {
               });
             }
           }
+
+          await refreshInboxHealth(message.inboxId);
         }
       } else {
         // Campaign sends use CampaignRecipient id as the tracking pixel id
@@ -66,7 +81,6 @@ export async function GET(req: NextRequest) {
             data: { readCount: { increment: 1 } },
           });
 
-          // Keep Sent Email Tracker in sync (Message row was still "SENT")
           if (recipient.messageId) {
             await prisma.message.update({
               where: { id: recipient.messageId },
@@ -82,8 +96,9 @@ export async function GET(req: NextRequest) {
               data: { status: "READ" },
             });
           }
+
+          await refreshInboxHealth(recipient.inboxId);
         } else if (recipient?.status === "READ" && recipient.messageId) {
-          // Backfill Message if campaign already marked READ earlier
           await prisma.message.updateMany({
             where: {
               id: recipient.messageId,
@@ -98,18 +113,12 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // 1x1 transparent GIF binary
-  const transparentGif = Buffer.from(
-    "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
-    "base64",
-  );
-
-  return new NextResponse(transparentGif, {
+  return new NextResponse(TRANSPARENT_GIF, {
     headers: {
       "Content-Type": "image/gif",
       "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-      "Pragma": "no-cache",
-      "Expires": "0",
+      Pragma: "no-cache",
+      Expires: "0",
     },
   });
 }

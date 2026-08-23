@@ -228,6 +228,8 @@ model CampaignRecipient {
   status       RecipientStatus @default(PENDING)
   errorMessage String?
   messageId    String?
+  /** Which mailbox sent this recipient (for open-rate health). */
+  inboxId      String?
   sentAt       DateTime?
   deliveredAt  DateTime?
   readAt       DateTime?
@@ -236,6 +238,7 @@ model CampaignRecipient {
 
   @@unique([campaignId, contactId])
   @@index([campaignId, status])
+  @@index([inboxId])
 }
 
 model Conversation {
@@ -264,6 +267,8 @@ model Message {
   contact        Contact          @relation(fields: [contactId], references: [id], onDelete: Cascade)
   campaignId     String?
   campaign       Campaign?        @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  /** Sending mailbox used for this outbound email (open-rate health). */
+  inboxId        String?
   channel        Channel          @default(WHATSAPP)
   direction      MessageDirection
   type           String           @default("text")
@@ -281,4 +286,5 @@ model Message {
   @@index([contactId, createdAt])
   @@index([metaMessageId])
   @@index([campaignId])
+  @@index([inboxId])
 }
