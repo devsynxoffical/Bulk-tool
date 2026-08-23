@@ -465,7 +465,10 @@ export function MailboxManager() {
           <CardTitle className="text-base">
             {editingId ? "Edit Mailbox" : "Connect New Mailbox"}
           </CardTitle>
-          <CardDescription>cPanel / Gmail / Outlook SMTP — port 465 + SSL recommended</CardDescription>
+          <CardDescription>
+            cPanel / Gmail / Outlook SMTP — port 465 + SSL recommended. Saved to database
+            automatically — no Railway env vars per mailbox.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={saveInbox} className="space-y-4">

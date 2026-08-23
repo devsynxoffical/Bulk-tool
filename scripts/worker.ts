@@ -21,13 +21,12 @@ async function bootWorker() {
   }, 60_000);
   void processScheduledCampaigns();
 
-  if (process.env.BOUNCE_IMAP_HOST) {
-    setInterval(() => {
-      void pollBounceMailboxOnce();
-    }, 300_000);
+  // Auto-read bounces from every mailbox saved in the app (no Railway env per inbox)
+  setInterval(() => {
     void pollBounceMailboxOnce();
-    console.log("Bounce IMAP poller enabled");
-  }
+  }, 300_000);
+  void pollBounceMailboxOnce();
+  console.log("Bounce poller enabled (uses mailboxes from database)");
 
   console.log("Worker ready — campaign queue + scheduler active");
 }
