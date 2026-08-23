@@ -84,7 +84,9 @@ export function CampaignsList({ campaigns }: { campaigns: CampaignWithTemplate[]
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((c) => (
+                {filtered.map((c) => {
+                  const processed = c.sentCount + c.failedCount;
+                  return (
                   <tr key={c.id} className="border-b border-zinc-50 last:border-0">
                     <td className="px-4 py-3">
                       <span
@@ -111,13 +113,16 @@ export function CampaignsList({ campaigns }: { campaigns: CampaignWithTemplate[]
                     <td className="px-4 py-3">
                       <div className="space-y-1">
                         <p className="text-zinc-700">
-                          {c.sentCount}/{c.totalCount}
+                          {processed}/{c.totalCount}
+                          <span className="ml-1 text-[10px] text-zinc-400">
+                            ({c.sentCount} sent{c.failedCount ? ` · ${c.failedCount} fail` : ""})
+                          </span>
                         </p>
                         <div className="h-1 w-28 overflow-hidden rounded-full bg-zinc-100">
                           <div
                             className="h-full rounded-full bg-zinc-900"
                             style={{
-                              width: formatPercent(c.sentCount, c.totalCount),
+                              width: formatPercent(processed, c.totalCount),
                             }}
                           />
                         </div>
@@ -134,7 +139,8 @@ export function CampaignsList({ campaigns }: { campaigns: CampaignWithTemplate[]
                       {formatDistanceToNow(new Date(c.createdAt), { addSuffix: true })}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </CardContent>

@@ -119,6 +119,11 @@ export async function processCampaignJob(job: Job<CampaignJobData>) {
     return;
   }
 
+  // BullMQ retries — don't re-send or double-count terminal recipients
+  if (["SENT", "DELIVERED", "READ", "FAILED", "SKIPPED"].includes(recipient.status)) {
+    return;
+  }
+
   const vars = contactVars(recipient.contact);
 
   if (recipient.contact.emailOptedOut) {
