@@ -10,6 +10,9 @@ export const DEFAULT_DOMAIN_DAILY_LIMIT = 1000;
 /** Minimum seconds between sends from the same inbox (floor). */
 export const MIN_INBOX_INTERVAL_SEC = 45;
 
+/** Max seconds between sends from the same inbox — daily cap is the real limit. */
+export const MAX_INBOX_COOLDOWN_SEC = 180;
+
 /** Parallel campaign workers (one send per inbox slot). */
 export const WORKER_CONCURRENCY = 4;
 

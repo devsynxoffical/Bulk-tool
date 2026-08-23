@@ -2,6 +2,7 @@ import { prisma, ensureDbSchema } from "@/lib/prisma";
 import {
   extractDomainFromEmail,
   MIN_INBOX_INTERVAL_SEC,
+  MAX_INBOX_COOLDOWN_SEC,
   SENDING_DAY_SECONDS,
   BOUNCE_RATE_PAUSE_THRESHOLD,
 } from "./constants";
@@ -32,7 +33,9 @@ export function getInboxCooldownMs(inbox: {
 }): number {
   const cap = getEffectiveDailyLimit(inbox);
   const evenSpreadSec = SENDING_DAY_SECONDS / Math.max(cap, 1);
-  const cooldownSec = Math.max(MIN_INBOX_INTERVAL_SEC, evenSpreadSec * 0.9);
+  const spreadCooldownSec = Math.max(MIN_INBOX_INTERVAL_SEC, evenSpreadSec * 0.9);
+  // Daily cap (e.g. 20/day warmup) is enforced separately — don't idle 65+ min between sends
+  const cooldownSec = Math.min(spreadCooldownSec, MAX_INBOX_COOLDOWN_SEC);
   return Math.floor(cooldownSec * 1000);
 }
 
@@ -133,6 +136,38 @@ export type GetNextSendingInboxOptions = {
   respectCooldown?: boolean;
 };
 
+function describeInboxBlockers(
+  inbox: InboxWithDomain,
+  now: number,
+  respectCooldown: boolean,
+): string[] {
+  const reasons: string[] = [];
+  if (!inboxHasCapacity(inbox)) {
+    reasons.push(`daily cap (${inbox.sentToday}/${getEffectiveDailyLimit(inbox)})`);
+  }
+  if (!domainHasCapacity(inbox.domain)) {
+    reasons.push(
+      `domain cap (${inbox.domain?.sentToday ?? 0}/${inbox.domain?.dailyLimit ?? "?"})`,
+    );
+  }
+  if (!inboxBounceRateOk(inbox)) reasons.push("bounce rate");
+  if (respectCooldown && !inboxCooldownReady(inbox, now)) {
+    const waitSec = inbox.lastSentAt
+      ? Math.max(
+          0,
+          Math.ceil(
+            (inbox.lastSentAt.getTime() +
+              getInboxCooldownMs(inbox) -
+              now) /
+              1000,
+          ),
+        )
+      : 0;
+    reasons.push(`cooldown (${waitSec}s)`);
+  }
+  return reasons;
+}
+
 export async function getNextSendingInbox(
   options: GetNextSendingInboxOptions = {},
 ): Promise<EmailAccountRecord> {
@@ -175,13 +210,25 @@ export async function getMsUntilInboxAvailable(): Promise<number> {
 
   const inboxes = await prisma.emailAccount.findMany({
     where: { isActive: true },
+    include: {
+      domain: {
+        select: {
+          id: true,
+          domainName: true,
+          dailyLimit: true,
+          sentToday: true,
+          isVerified: true,
+        },
+      },
+    },
   });
 
   const now = Date.now();
   let minWait = 60_000;
 
   for (const inbox of inboxes) {
-    if (!inboxHasCapacity(inbox) || !inboxBounceRateOk(inbox)) continue;
+    if (!inboxHasCapacity(inbox) || !domainHasCapacity(inbox.domain)) continue;
+    if (!inboxBounceRateOk(inbox)) continue;
     if (!inbox.lastSentAt) return 0;
     const readyAt = inbox.lastSentAt.getTime() + getInboxCooldownMs(inbox);
     const wait = readyAt - now;
@@ -190,6 +237,22 @@ export async function getMsUntilInboxAvailable(): Promise<number> {
   }
 
   return Math.max(minWait, 5000);
+}
+
+export function explainInboxAvailability(
+  inboxes: InboxWithDomain[],
+  respectCooldown = true,
+): string {
+  const now = Date.now();
+  const lines = inboxes
+    .filter((i) => i.isActive)
+    .map((inbox) => {
+      const blockers = describeInboxBlockers(inbox, now, respectCooldown);
+      return blockers.length
+        ? `${inbox.fromEmail}: ${blockers.join(", ")}`
+        : `${inbox.fromEmail}: ready`;
+    });
+  return lines.join("; ");
 }
 
 export async function recordInboxSend(

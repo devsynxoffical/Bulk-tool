@@ -14,6 +14,7 @@ import { WORKER_CONCURRENCY } from "@/lib/email/constants";
 import { applyAuthFailureHealthCap } from "@/lib/email/health";
 import {
   checkDailyReset,
+  explainInboxAvailability,
   getMsUntilInboxAvailable,
   getNextSendingInbox,
 } from "@/lib/email/rotator";
@@ -177,8 +178,22 @@ export async function processCampaignJob(
   const sendingInbox = await getNextSendingInbox();
   if (!sendingInbox) {
     const waitMs = await getMsUntilInboxAvailable();
+    const inboxes = await prisma.emailAccount.findMany({
+      where: { isActive: true },
+      include: {
+        domain: {
+          select: {
+            id: true,
+            domainName: true,
+            dailyLimit: true,
+            sentToday: true,
+            isVerified: true,
+          },
+        },
+      },
+    });
     console.warn(
-      `Campaign job ${job.id}: no inbox ready, delaying ${Math.round(waitMs / 1000)}s`,
+      `Campaign job ${job.id}: no inbox ready, delaying ${Math.round(waitMs / 1000)}s — ${explainInboxAvailability(inboxes)}`,
     );
     await job.moveToDelayed(Date.now() + waitMs, token ?? job.token);
     throw new DelayedError("No sending inbox available");
