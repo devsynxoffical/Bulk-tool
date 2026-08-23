@@ -10,7 +10,10 @@ import {
   computeSpreadDelayMs,
   getThrottleDelayMs,
 } from "@/lib/email/throttle";
-import { WORKER_CONCURRENCY } from "@/lib/email/constants";
+import {
+  HEALTH_PENALTY_AUTH_FAILURE,
+  WORKER_CONCURRENCY,
+} from "@/lib/email/constants";
 import {
   checkDailyReset,
   getMsUntilInboxAvailable,
@@ -91,6 +94,18 @@ function contactVars(contact: {
     City: custom.city || custom.City || custom.location || "your area",
     ...custom,
   };
+}
+
+function isSmtpAuthFailure(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes("535") ||
+    m.includes("incorrect authentication") ||
+    m.includes("authentication failed") ||
+    m.includes("invalid login") ||
+    m.includes("username and password not accepted") ||
+    m.includes("authentication credentials invalid")
+  );
 }
 
 export async function processCampaignJob(job: Job<CampaignJobData>) {
@@ -244,6 +259,32 @@ export async function processCampaignJob(job: Job<CampaignJobData>) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Send failed";
+
+    // Wrong mailbox password — skip this inbox, retry lead on a different mailbox
+    if (isSmtpAuthFailure(message)) {
+      try {
+        await prisma.emailAccount.update({
+          where: { id: sendingInbox.id },
+          data: {
+            healthScore: { decrement: HEALTH_PENALTY_AUTH_FAILURE },
+          },
+        });
+      } catch {
+        /* non-fatal */
+      }
+      await prisma.campaignRecipient.update({
+        where: { id: recipientId },
+        data: {
+          status: "PENDING",
+          errorMessage: `Inbox login failed (${sendingInbox.fromEmail}) — will retry another mailbox`,
+        },
+      });
+      console.warn(
+        `SMTP auth failed for ${sendingInbox.fromEmail} — inbox penalized, recipient re-queued`,
+      );
+      await job.moveToDelayed(Date.now() + 60_000, job.token);
+      return;
+    }
 
     if (recipient.contact.email && isLikelySmtpBounce(message)) {
       await recordBounce({

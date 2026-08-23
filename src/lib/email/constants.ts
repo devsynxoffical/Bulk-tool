@@ -22,6 +22,9 @@ export const BOUNCE_RATE_PAUSE_THRESHOLD = 0.05;
 /** Health score penalty per hard bounce. */
 export const HEALTH_PENALTY_PER_BOUNCE = 15;
 
+/** Drop inbox below rotator threshold on SMTP auth failure (535). */
+export const HEALTH_PENALTY_AUTH_FAILURE = 70;
+
 /** Minimum seconds between campaign job enqueue (stagger worker pickup). */
 export const JOB_STAGGER_MIN_SEC = 3;
 
