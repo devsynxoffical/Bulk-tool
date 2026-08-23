@@ -63,7 +63,7 @@ export async function GET(req: NextRequest) {
         },
       },
       orderBy: { receivedAt: "desc" },
-      take: 300,
+      take: 500,
     });
 
     const totalUnread = await prisma.inboundEmail.count({
@@ -111,13 +111,20 @@ export async function GET(req: NextRequest) {
   }
 }
 
-export async function POST() {
+export async function POST(req: NextRequest) {
   const { error } = await requireSession();
   if (error) return error;
 
   try {
-    const synced = await syncAllInboxesOnce();
-    return NextResponse.json({ success: true, synced });
+    let deep = false;
+    try {
+      const body = await req.json();
+      deep = Boolean(body?.deep);
+    } catch {
+      // empty body = incremental sync
+    }
+    const synced = await syncAllInboxesOnce({ deep });
+    return NextResponse.json({ success: true, synced, deep });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Inbox sync failed";
     return NextResponse.json({ error: msg }, { status: 500 });

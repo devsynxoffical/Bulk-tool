@@ -13,10 +13,12 @@ import {
   Send,
   Loader2,
   CheckCheck,
+  History,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { conversationKey, normalizeSubject } from "@/lib/email/thread";
 
 type MailboxOption = {
   id: string;
@@ -46,6 +48,28 @@ type InboundMessage = {
   contact: { id: string; name: string | null; email: string | null } | null;
 };
 
+type ThreadItem = {
+  id: string;
+  direction: "INBOUND" | "OUTBOUND";
+  fromEmail: string;
+  fromName: string | null;
+  toEmail: string;
+  subject: string;
+  bodyText: string;
+  bodyHtml: string;
+  receivedAt: string;
+  relatedOutboundId: string | null;
+  isRead?: boolean;
+};
+
+type ConversationRow = {
+  key: string;
+  latest: InboundMessage;
+  messages: InboundMessage[];
+  unreadCount: number;
+  count: number;
+};
+
 function formatDate(value: string) {
   const d = new Date(value);
   const now = new Date();
@@ -59,12 +83,28 @@ function formatDate(value: string) {
   });
 }
 
-function senderLabel(msg: InboundMessage) {
+function senderLabel(msg: Pick<InboundMessage, "fromName" | "fromEmail">) {
   return msg.fromName?.trim() || msg.fromEmail;
 }
 
 function replySubject(subject: string) {
   return /^re:/i.test(subject) ? subject : `Re: ${subject}`;
+}
+
+function displaySubject(subject: string) {
+  const base = normalizeSubject(subject);
+  if (base === "(no subject)") return "(No subject)";
+  // Title-case-ish from normalized lowercase subject for list
+  return subject.replace(/^((re|fwd|fw)\s*:\s*)+/i, "").trim() || "(No subject)";
+}
+
+function stripQuotedTail(text: string): string {
+  const lines = text.split("\n");
+  const cut = lines.findIndex((line) =>
+    /^(on .+ wrote:|>{1,}|from:\s)/i.test(line.trim()),
+  );
+  if (cut <= 0) return text.trim();
+  return lines.slice(0, cut).join("\n").trim() || text.trim();
 }
 
 export function InboxClient() {
@@ -73,10 +113,13 @@ export function InboxClient() {
   const [totalUnread, setTotalUnread] = useState(0);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [deepSyncing, setDeepSyncing] = useState(false);
   const [search, setSearch] = useState("");
   const [selectedInboxId, setSelectedInboxId] = useState("");
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [selected, setSelected] = useState<InboundMessage | null>(null);
+  const [threadItems, setThreadItems] = useState<ThreadItem[]>([]);
+  const [threadLoading, setThreadLoading] = useState(false);
   const [replyBody, setReplyBody] = useState("");
   const [replySending, setReplySending] = useState(false);
   const [replyError, setReplyError] = useState<string | null>(null);
@@ -108,13 +151,51 @@ export function InboxClient() {
     }
   }, [selectedInboxId, unreadOnly]);
 
-  async function syncNow() {
-    setSyncing(true);
+  const loadThread = useCallback(async (msg: InboundMessage) => {
+    setThreadLoading(true);
     try {
-      await fetch("/api/inbox", { method: "POST" });
+      const res = await fetch(`/api/inbox/${msg.id}/thread`);
+      if (!res.ok) {
+        setThreadItems([
+          {
+            id: msg.id,
+            direction: "INBOUND",
+            fromEmail: msg.fromEmail,
+            fromName: msg.fromName,
+            toEmail: msg.toEmail,
+            subject: msg.subject,
+            bodyText: msg.bodyText,
+            bodyHtml: msg.bodyHtml,
+            receivedAt: msg.receivedAt,
+            relatedOutboundId: msg.relatedOutboundId,
+            isRead: msg.isRead,
+          },
+        ]);
+        return;
+      }
+      const data = await res.json();
+      setThreadItems(data.items || []);
+    } catch {
+      setThreadItems([]);
+    } finally {
+      setThreadLoading(false);
+    }
+  }, []);
+
+  async function syncNow(deep = false) {
+    if (deep) setDeepSyncing(true);
+    else setSyncing(true);
+    try {
+      await fetch("/api/inbox", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deep }),
+      });
       await loadInbox({ silent: true });
+      if (selected) await loadThread(selected);
     } finally {
       setSyncing(false);
+      setDeepSyncing(false);
     }
   }
 
@@ -141,12 +222,18 @@ export function InboxClient() {
     }
   }
 
-  function openMessage(msg: InboundMessage) {
+  function openConversation(row: ConversationRow) {
+    const msg = row.latest;
     setSelected(msg);
     setReplyBody("");
     setReplyError(null);
     setReplyOk(null);
     void markRead(msg);
+    // Mark other unread in this thread as read (best-effort)
+    for (const m of row.messages) {
+      if (!m.isRead && m.id !== msg.id) void markRead(m);
+    }
+    void loadThread(msg);
   }
 
   async function sendReply() {
@@ -169,6 +256,8 @@ export function InboxClient() {
       }
       setReplyOk(`Reply sent from ${data.from} → ${data.to}`);
       setReplyBody("");
+      await loadThread(selected);
+      await loadInbox({ silent: true });
     } catch {
       setReplyError("Network error while sending reply");
     } finally {
@@ -182,22 +271,64 @@ export function InboxClient() {
     return () => clearInterval(interval);
   }, [loadInbox]);
 
+  const conversations = useMemo(() => {
+    const map = new Map<string, ConversationRow>();
+    for (const msg of messages) {
+      const key = conversationKey(msg.inboxId, msg.fromEmail, msg.subject);
+      const existing = map.get(key);
+      if (!existing) {
+        map.set(key, {
+          key,
+          latest: msg,
+          messages: [msg],
+          unreadCount: msg.isRead ? 0 : 1,
+          count: 1,
+        });
+      } else {
+        existing.messages.push(msg);
+        existing.count += 1;
+        if (!msg.isRead) existing.unreadCount += 1;
+        if (
+          new Date(msg.receivedAt).getTime() >
+          new Date(existing.latest.receivedAt).getTime()
+        ) {
+          existing.latest = msg;
+        }
+      }
+    }
+    return Array.from(map.values()).sort(
+      (a, b) =>
+        new Date(b.latest.receivedAt).getTime() -
+        new Date(a.latest.receivedAt).getTime(),
+    );
+  }, [messages]);
+
   const filtered = useMemo(() => {
-    if (!search.trim()) return messages;
+    if (!search.trim()) return conversations;
     const q = search.toLowerCase();
-    return messages.filter(
-      (msg) =>
+    return conversations.filter((row) => {
+      const msg = row.latest;
+      return (
         msg.fromEmail.toLowerCase().includes(q) ||
         Boolean(msg.fromName?.toLowerCase().includes(q)) ||
         msg.subject.toLowerCase().includes(q) ||
         msg.bodyText.toLowerCase().includes(q) ||
-        msg.mailboxEmail.toLowerCase().includes(q),
-    );
-  }, [messages, search]);
+        msg.mailboxEmail.toLowerCase().includes(q) ||
+        row.messages.some(
+          (m) =>
+            m.subject.toLowerCase().includes(q) ||
+            m.bodyText.toLowerCase().includes(q),
+        )
+      );
+    });
+  }, [conversations, search]);
 
   const selectedMailbox = mailboxes.find((m) => m.id === selectedInboxId);
   const syncErrors = mailboxes.filter((m) => m.inboxSyncError);
   const activeCount = mailboxes.filter((m) => m.isActive).length;
+  const selectedKey = selected
+    ? conversationKey(selected.inboxId, selected.fromEmail, selected.subject)
+    : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-zinc-50">
@@ -217,37 +348,56 @@ export function InboxClient() {
               )}
             </h1>
             <p className="mt-1 text-xs text-zinc-500">
-              Incoming mail across all sending mailboxes — reply from the same inbox.
+              Conversations across sending mailboxes — older replies stay in the
+              thread.
             </p>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => void syncNow()}
-            disabled={syncing || loading}
-            className="w-fit"
-          >
-            <RefreshCw
-              className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`}
-            />
-            {syncing ? "Syncing…" : "Sync now"}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void syncNow(true)}
+              disabled={deepSyncing || syncing || loading}
+              className="w-fit"
+              title="Re-scan IMAP for older messages in threads"
+            >
+              <History
+                className={`h-3.5 w-3.5 ${deepSyncing ? "animate-spin" : ""}`}
+              />
+              {deepSyncing ? "Loading older…" : "Load older mail"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void syncNow(false)}
+              disabled={syncing || deepSyncing || loading}
+              className="w-fit"
+            >
+              <RefreshCw
+                className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`}
+              />
+              {syncing ? "Syncing…" : "Sync now"}
+            </Button>
+          </div>
         </div>
 
         {syncErrors.length > 0 && (
           <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
             <p className="flex items-center gap-1.5 font-semibold">
               <AlertCircle className="h-3.5 w-3.5" />
-              {syncErrors.length} mailbox{syncErrors.length === 1 ? "" : "es"} failed IMAP sync
+              {syncErrors.length} mailbox{syncErrors.length === 1 ? "" : "es"}{" "}
+              failed IMAP sync
             </p>
             <p className="mt-1 text-amber-800">
               Check credentials on{" "}
               <Link href="/mailboxes" className="font-medium underline">
                 Sending Mailboxes
               </Link>
-              . IMAP needs <code className="rounded bg-amber-100 px-1">mail.domain.com</code>, not
-              an SMTP relay host.
+              . IMAP needs{" "}
+              <code className="rounded bg-amber-100 px-1">mail.domain.com</code>
+              , not an SMTP relay host.
             </p>
           </div>
         )}
@@ -259,15 +409,14 @@ export function InboxClient() {
             onChange={(e) => {
               setSelectedInboxId(e.target.value);
               setSelected(null);
+              setThreadItems([]);
               setReplyBody("");
               setReplyOk(null);
               setReplyError(null);
             }}
             className="h-9 min-w-[220px] rounded-lg border border-zinc-200 bg-white px-3 text-sm text-zinc-900 shadow-xs focus:outline-none focus:ring-2 focus:ring-blue-500/25"
           >
-            <option value="">
-              All mailboxes ({mailboxes.length})
-            </option>
+            <option value="">All mailboxes ({mailboxes.length})</option>
             {mailboxes.map((mb) => (
               <option key={mb.id} value={mb.id}>
                 {mb.isActive ? "" : "[Paused] "}
@@ -314,11 +463,12 @@ export function InboxClient() {
 
       {/* Split panes */}
       <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[360px_1fr]">
-        {/* Message list */}
+        {/* Conversation list */}
         <div className="flex min-h-0 flex-col border-r border-zinc-200 bg-white">
           <div className="flex shrink-0 items-center justify-between border-b border-zinc-100 px-4 py-2.5">
             <p className="text-xs font-semibold text-zinc-600">
-              {filtered.length} message{filtered.length === 1 ? "" : "s"}
+              {filtered.length} conversation
+              {filtered.length === 1 ? "" : "s"}
             </p>
             {loading && (
               <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-400" />
@@ -326,42 +476,48 @@ export function InboxClient() {
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
             {loading && filtered.length === 0 ? (
-              <p className="p-8 text-center text-sm text-zinc-500">Loading inbox…</p>
+              <p className="p-8 text-center text-sm text-zinc-500">
+                Loading inbox…
+              </p>
             ) : filtered.length === 0 ? (
               <div className="flex flex-col items-center px-6 py-16 text-center">
                 <Mail className="mb-3 h-8 w-8 text-zinc-300" />
-                <p className="text-sm font-medium text-zinc-600">No messages</p>
+                <p className="text-sm font-medium text-zinc-600">
+                  No conversations
+                </p>
                 <p className="mt-1 text-xs text-zinc-400">
-                  Try another mailbox filter, or click Sync now.
+                  Try Load older mail, or Sync now.
                 </p>
               </div>
             ) : (
-              filtered.map((msg) => {
-                const active = selected?.id === msg.id;
+              filtered.map((row) => {
+                const msg = row.latest;
+                const active = selectedKey === row.key;
+                const hasUnread = row.unreadCount > 0;
                 return (
                   <button
-                    key={msg.id}
+                    key={row.key}
                     type="button"
-                    onClick={() => openMessage(msg)}
+                    onClick={() => openConversation(row)}
                     className={`w-full border-b border-zinc-100 px-4 py-3 text-left transition-colors ${
                       active
-                        ? "bg-blue-50 border-l-2 border-l-blue-600"
+                        ? "border-l-2 border-l-blue-600 bg-blue-50"
                         : "border-l-2 border-l-transparent hover:bg-zinc-50"
                     }`}
                   >
                     <div className="flex items-start gap-2.5">
                       <span
                         className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
-                          msg.isRead ? "bg-transparent" : "bg-blue-600"
+                          hasUnread ? "bg-blue-600" : "bg-transparent"
                         }`}
                       />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-baseline justify-between gap-2">
                           <p
                             className={`truncate text-[13px] ${
-                              msg.isRead
-                                ? "font-medium text-zinc-700"
-                                : "font-semibold text-zinc-900"
+                              hasUnread
+                                ? "font-semibold text-zinc-900"
+                                : "font-medium text-zinc-700"
                             }`}
                           >
                             {senderLabel(msg)}
@@ -372,10 +528,17 @@ export function InboxClient() {
                         </div>
                         <p
                           className={`mt-0.5 truncate text-xs ${
-                            msg.isRead ? "text-zinc-500" : "font-medium text-zinc-800"
+                            hasUnread
+                              ? "font-medium text-zinc-800"
+                              : "text-zinc-500"
                           }`}
                         >
-                          {msg.subject || "(No subject)"}
+                          {displaySubject(msg.subject)}
+                          {row.count > 1 && (
+                            <span className="ml-1.5 text-[10px] font-semibold text-blue-600">
+                              · {row.count}
+                            </span>
+                          )}
                         </p>
                         <p className="mt-0.5 truncate text-[11px] text-zinc-400">
                           {msg.mailboxEmail}
@@ -398,10 +561,12 @@ export function InboxClient() {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <h2 className="text-base font-bold text-zinc-900 sm:text-lg">
-                        {selected.subject || "(No subject)"}
+                        {displaySubject(selected.subject)}
                       </h2>
-                      {!selected.isRead && (
-                        <Badge tone="warning">Unread</Badge>
+                      {threadItems.length > 1 && (
+                        <Badge tone="default">
+                          {threadItems.length} in thread
+                        </Badge>
                       )}
                       {selected.relatedOutboundId && (
                         <Badge tone="success">
@@ -412,20 +577,14 @@ export function InboxClient() {
                     </div>
                     <dl className="mt-3 grid gap-1 text-xs text-zinc-600 sm:grid-cols-2">
                       <div>
-                        <span className="font-medium text-zinc-800">From:</span>{" "}
+                        <span className="font-medium text-zinc-800">With:</span>{" "}
                         {senderLabel(selected)} &lt;{selected.fromEmail}&gt;
                       </div>
                       <div>
-                        <span className="font-medium text-zinc-800">To:</span>{" "}
-                        {selected.toEmail}
-                      </div>
-                      <div>
-                        <span className="font-medium text-zinc-800">Mailbox:</span>{" "}
+                        <span className="font-medium text-zinc-800">
+                          Mailbox:
+                        </span>{" "}
                         {selected.mailboxEmail}
-                      </div>
-                      <div>
-                        <span className="font-medium text-zinc-800">Received:</span>{" "}
-                        {formatDate(selected.receivedAt)}
                       </div>
                     </dl>
                   </div>
@@ -436,6 +595,7 @@ export function InboxClient() {
                     className="shrink-0"
                     onClick={() => {
                       setSelected(null);
+                      setThreadItems([]);
                       setReplyBody("");
                       setReplyOk(null);
                       setReplyError(null);
@@ -447,19 +607,62 @@ export function InboxClient() {
                 </div>
               </div>
 
-              <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-                <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-xs">
-                  {selected.bodyHtml ? (
-                    <div
-                      className="prose prose-sm max-w-none break-words text-zinc-800 prose-a:text-blue-600"
-                      dangerouslySetInnerHTML={{ __html: selected.bodyHtml }}
-                    />
-                  ) : (
-                    <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-zinc-800">
-                      {selected.bodyText || "(Empty message body)"}
-                    </pre>
-                  )}
-                </div>
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-6 py-5">
+                {threadLoading && threadItems.length === 0 ? (
+                  <p className="flex items-center gap-2 text-sm text-zinc-500">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading conversation…
+                  </p>
+                ) : (
+                  threadItems.map((item) => {
+                    const outbound = item.direction === "OUTBOUND";
+                    const plain = stripQuotedTail(item.bodyText);
+                    return (
+                      <div
+                        key={`${item.direction}-${item.id}`}
+                        className={`rounded-xl border p-4 shadow-xs ${
+                          outbound
+                            ? "ml-6 border-blue-100 bg-blue-50/70"
+                            : "mr-6 border-zinc-200 bg-white"
+                        }`}
+                      >
+                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-zinc-500">
+                          <p className="font-medium text-zinc-700">
+                            {outbound ? "You" : senderLabel(item)}
+                            <span className="font-normal text-zinc-400">
+                              {" "}
+                              &lt;{item.fromEmail}&gt;
+                            </span>
+                          </p>
+                          <span>{formatDate(item.receivedAt)}</span>
+                        </div>
+                        {!outbound && item.bodyHtml ? (
+                          <div
+                            className="prose prose-sm max-w-none break-words text-zinc-800 prose-a:text-blue-600"
+                            dangerouslySetInnerHTML={{ __html: item.bodyHtml }}
+                          />
+                        ) : (
+                          <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed text-zinc-800">
+                            {plain || "(Empty message body)"}
+                          </pre>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+                {!threadLoading && threadItems.length <= 1 && (
+                  <p className="text-center text-[11px] text-zinc-400">
+                    Missing older messages? Click{" "}
+                    <button
+                      type="button"
+                      className="font-medium text-blue-600 underline"
+                      onClick={() => void syncNow(true)}
+                    >
+                      Load older mail
+                    </button>{" "}
+                    to pull more history from IMAP.
+                  </p>
+                )}
               </div>
 
               {/* Always-visible reply composer */}
@@ -493,7 +696,8 @@ export function InboxClient() {
                 )}
                 <div className="mt-2.5 flex items-center justify-between gap-2">
                   <p className="text-[11px] text-zinc-400">
-                    Sends via this mailbox’s SMTP · threaded reply headers included
+                    Sends via this mailbox’s SMTP · threaded reply headers
+                    included
                   </p>
                   <Button
                     type="button"
@@ -518,11 +722,11 @@ export function InboxClient() {
                 <Mail className="h-7 w-7 text-zinc-400" />
               </div>
               <p className="text-sm font-semibold text-zinc-700">
-                Select a message to read & reply
+                Select a conversation to read & reply
               </p>
               <p className="mt-1.5 max-w-sm text-xs leading-relaxed text-zinc-400">
-                Pick any email on the left. The reply box appears at the bottom so you
-                can answer from that same sending mailbox.
+                Related emails are grouped into one thread. Open any conversation
+                to see the full history, including your sent replies.
               </p>
             </div>
           )}

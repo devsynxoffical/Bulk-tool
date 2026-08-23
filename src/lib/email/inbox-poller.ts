@@ -9,10 +9,17 @@ import {
   recordBounce,
 } from "./bounce-handler";
 
-const INITIAL_BACKFILL_COUNT = 80;
+const INITIAL_BACKFILL_COUNT = 200;
+/** When user asks to load older mail, re-scan this many UIDs from the top. */
+const DEEP_BACKFILL_COUNT = 500;
 const idleLoops = new Map<string, boolean>();
 /** Prevent IDLE + fallback poll from syncing the same mailbox at once. */
 const syncLocks = new Map<string, Promise<number>>();
+
+export type InboxSyncOptions = {
+  /** Re-fetch a wide UID window so older thread messages are imported. */
+  deep?: boolean;
+};
 
 type ParsedMail = {
   subject?: string;
@@ -187,6 +194,7 @@ type ImapClient = {
 async function fetchAndStoreNewMessages(
   client: ImapClient,
   config: MailboxImapConfig,
+  options: InboxSyncOptions = {},
 ): Promise<number> {
   const { simpleParser } = await import("mailparser");
 
@@ -211,7 +219,11 @@ async function fetchAndStoreNewMessages(
   }
 
   let searchFrom: number;
-  if (lastUid > 0) {
+  if (options.deep) {
+    // Re-scan a wide window so older messages in a thread get imported.
+    // Existing (inboxId, imapUid) rows are skipped safely.
+    searchFrom = Math.max(1, uidNext - DEEP_BACKFILL_COUNT);
+  } else if (lastUid > 0) {
     searchFrom = lastUid + 1;
   } else {
     searchFrom = Math.max(1, uidNext - INITIAL_BACKFILL_COUNT);
@@ -304,6 +316,7 @@ async function withMailboxLock(
 
 export async function syncInboxMailbox(
   config: MailboxImapConfig,
+  options: InboxSyncOptions = {},
 ): Promise<number> {
   return withMailboxLock(config.accountId, async () => {
     const { ImapFlow } = await import("imapflow");
@@ -322,7 +335,7 @@ export async function syncInboxMailbox(
     const lock = await client.getMailboxLock("INBOX");
 
     try {
-      return await fetchAndStoreNewMessages(client, config);
+      return await fetchAndStoreNewMessages(client, config, options);
     } finally {
       lock.release();
       await client.logout().catch(() => undefined);
@@ -330,17 +343,21 @@ export async function syncInboxMailbox(
   });
 }
 
-export async function syncAllInboxesOnce(): Promise<number> {
+export async function syncAllInboxesOnce(
+  options: InboxSyncOptions = {},
+): Promise<number> {
   const configs = await resolveMailboxImapConfigs();
   let total = 0;
 
   for (const config of configs) {
     if (config.accountId === "env-bounce") continue;
     try {
-      const n = await syncInboxMailbox(config);
+      const n = await syncInboxMailbox(config, options);
       total += n;
       if (n > 0) {
-        console.log(`Inbox sync: ${n} new on ${config.fromEmail}`);
+        console.log(
+          `Inbox sync${options.deep ? " (deep)" : ""}: ${n} new on ${config.fromEmail}`,
+        );
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
