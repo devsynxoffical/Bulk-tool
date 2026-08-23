@@ -11,6 +11,8 @@ import {
 
 const INITIAL_BACKFILL_COUNT = 80;
 const idleLoops = new Map<string, boolean>();
+/** Prevent IDLE + fallback poll from syncing the same mailbox at once. */
+const syncLocks = new Map<string, Promise<number>>();
 
 type ParsedMail = {
   subject?: string;
@@ -20,7 +22,7 @@ type ParsedMail = {
   to?: { value?: Array<{ address?: string }> };
   messageId?: string;
   inReplyTo?: string | string[];
-  references?: string | string[];
+  references?: unknown;
   date?: Date;
 };
 
@@ -30,14 +32,37 @@ function normalizeMessageId(value: unknown): string | null {
   return raw.replace(/^<|>$/g, "").trim() || null;
 }
 
-/** mailparser may return references as a string OR string[]. */
+/**
+ * mailparser returns `references` as string | string[] | undefined.
+ * Never call `.map` on it directly — a bare string has no .map.
+ */
 function normalizeReferences(refs: unknown): string[] {
-  if (!refs) return [];
-  const list = Array.isArray(refs) ? refs : [refs];
-  return list
-    .flatMap((r) => String(r).split(/\s+/))
-    .map((r) => normalizeMessageId(r))
-    .filter(Boolean) as string[];
+  if (refs == null) return [];
+  if (Array.isArray(refs)) {
+    return refs
+      .flatMap((r) => String(r).split(/\s+/))
+      .map((r) => normalizeMessageId(r))
+      .filter(Boolean) as string[];
+  }
+  if (typeof refs === "string") {
+    return refs
+      .split(/\s+/)
+      .map((r) => normalizeMessageId(r))
+      .filter(Boolean) as string[];
+  }
+  // Unexpected shape (object, number, etc.)
+  return [];
+}
+
+function isUniqueConstraintError(e: unknown): boolean {
+  if (!e || typeof e !== "object") return false;
+  const err = e as { code?: string; message?: string };
+  if (err.code === "P2002") return true;
+  const msg = String(err.message || e);
+  return (
+    msg.includes("Unique constraint failed") &&
+    (msg.includes("imapUid") || msg.includes("inboxId") || msg.includes("InboundEmail"))
+  );
 }
 
 async function matchOutboundMessage(
@@ -63,7 +88,7 @@ async function matchOutboundMessage(
   return null;
 }
 
-async function upsertInboundFromParsed(
+async function storeInboundFromParsed(
   config: MailboxImapConfig,
   uid: number,
   parsed: ParsedMail,
@@ -77,9 +102,8 @@ async function upsertInboundFromParsed(
         : "";
   const body = `${bodyText}\n${bodyHtml}`;
   const subject = parsed.subject || "(No subject)";
-  const isBounce = isBounceNotification(subject, body);
 
-  if (isBounce) {
+  if (isBounceNotification(subject, body)) {
     const bouncedEmail = parseBouncedRecipientFromBody(body);
     if (bouncedEmail) {
       await recordBounce({
@@ -111,15 +135,20 @@ async function upsertInboundFromParsed(
   const relatedOutboundId = await matchOutboundMessage(inReplyTo, references);
   const receivedAt = parsed.date || new Date();
 
-  try {
-    await prisma.inboundEmail.upsert({
-      where: {
-        inboxId_imapUid: {
-          inboxId: config.accountId,
-          imapUid: uid,
-        },
+  const existing = await prisma.inboundEmail.findUnique({
+    where: {
+      inboxId_imapUid: {
+        inboxId: config.accountId,
+        imapUid: uid,
       },
-      create: {
+    },
+    select: { id: true },
+  });
+  if (existing) return false;
+
+  try {
+    await prisma.inboundEmail.create({
+      data: {
         inboxId: config.accountId,
         imapUid: uid,
         messageId,
@@ -135,19 +164,12 @@ async function upsertInboundFromParsed(
         contactId: contact?.id,
         receivedAt,
       },
-      update: {},
     });
+    return true;
   } catch (e) {
-    // Concurrent sync / IDLE race on unique (inboxId, imapUid)
-    const code =
-      e && typeof e === "object" && "code" in e
-        ? String((e as { code: unknown }).code)
-        : "";
-    if (code === "P2002") return false;
+    if (isUniqueConstraintError(e)) return false;
     throw e;
   }
-
-  return true;
 }
 
 type ImapClient = {
@@ -159,6 +181,7 @@ type ImapClient = {
     range: string,
     query: { uid?: boolean; source?: boolean },
   ) => AsyncIterable<{ uid?: number; source?: Buffer }>;
+  mailbox?: { exists?: number; uidNext?: number } | false;
 };
 
 async function fetchAndStoreNewMessages(
@@ -176,8 +199,16 @@ async function fetchAndStoreNewMessages(
   let lastUid = account.lastInboxPollUid || 0;
   let newCount = 0;
 
-  const status = await client.status("INBOX", { uidNext: true });
-  const uidNext = status.uidNext || 1;
+  let uidNext = 1;
+  try {
+    const status = await client.status("INBOX", { uidNext: true });
+    uidNext = status.uidNext || 1;
+  } catch {
+    // Fall back to mailbox lock metadata if STATUS fails
+    if (client.mailbox && typeof client.mailbox === "object") {
+      uidNext = client.mailbox.uidNext || 1;
+    }
+  }
 
   let searchFrom: number;
   if (lastUid > 0) {
@@ -186,7 +217,7 @@ async function fetchAndStoreNewMessages(
     searchFrom = Math.max(1, uidNext - INITIAL_BACKFILL_COUNT);
   }
 
-  // Avoid ImapFlow "Command failed" on empty UID ranges
+  // Empty range → ImapFlow throws "Command failed"
   if (searchFrom >= uidNext) {
     await prisma.emailAccount.update({
       where: { id: config.accountId },
@@ -198,24 +229,38 @@ async function fetchAndStoreNewMessages(
     return 0;
   }
 
-  for await (const msg of client.fetch(`${searchFrom}:*`, {
-    uid: true,
-    source: true,
-  })) {
-    if (!msg.uid || !msg.source) continue;
-    lastUid = Math.max(lastUid, msg.uid);
+  try {
+    for await (const msg of client.fetch(`${searchFrom}:${uidNext - 1}`, {
+      uid: true,
+      source: true,
+    })) {
+      if (!msg.uid || !msg.source) continue;
+      lastUid = Math.max(lastUid, msg.uid);
 
-    try {
-      const parsed = (await simpleParser(msg.source)) as ParsedMail;
-      const stored = await upsertInboundFromParsed(config, msg.uid, parsed);
-      if (stored) newCount += 1;
-    } catch (e) {
-      const msgText = e instanceof Error ? e.message : String(e);
+      try {
+        const parsed = (await simpleParser(msg.source)) as ParsedMail;
+        const stored = await storeInboundFromParsed(config, msg.uid, parsed);
+        if (stored) newCount += 1;
+      } catch (e) {
+        const msgText = e instanceof Error ? e.message : String(e);
+        // Never let one bad MIME message kill the whole mailbox sync
+        console.warn(
+          `Inbox parse/store failed for ${config.fromEmail} uid=${msg.uid}:`,
+          msgText.slice(0, 200),
+        );
+      }
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // Common when UIDs were expunged mid-fetch — advance cursor and continue
+    if (/command failed/i.test(msg) || /uid/i.test(msg)) {
       console.warn(
-        `Inbox parse/store failed for ${config.fromEmail} uid=${msg.uid}:`,
-        msgText,
+        `Inbox fetch range failed for ${config.fromEmail} (${searchFrom}:${uidNext - 1}):`,
+        msg.slice(0, 200),
       );
-      // Advance UID cursor so one bad message doesn't block the mailbox forever
+      lastUid = Math.max(lastUid, uidNext - 1);
+    } else {
+      throw e;
     }
   }
 
@@ -231,30 +276,58 @@ async function fetchAndStoreNewMessages(
   return newCount;
 }
 
+async function withMailboxLock(
+  accountId: string,
+  fn: () => Promise<number>,
+): Promise<number> {
+  const prev = syncLocks.get(accountId) || Promise.resolve(0);
+  let release!: (n: number) => void;
+  const gate = new Promise<number>((resolve) => {
+    release = resolve;
+  });
+  syncLocks.set(accountId, gate);
+
+  try {
+    await prev.catch(() => 0);
+    const result = await fn();
+    release(result);
+    return result;
+  } catch (e) {
+    release(0);
+    throw e;
+  } finally {
+    if (syncLocks.get(accountId) === gate) {
+      syncLocks.delete(accountId);
+    }
+  }
+}
+
 export async function syncInboxMailbox(
   config: MailboxImapConfig,
 ): Promise<number> {
-  const { ImapFlow } = await import("imapflow");
+  return withMailboxLock(config.accountId, async () => {
+    const { ImapFlow } = await import("imapflow");
 
-  const client = new ImapFlow({
-    host: config.host,
-    port: config.port,
-    secure: config.secure,
-    auth: { user: config.user, pass: config.pass },
-    logger: false,
-    connectionTimeout: 20000,
-    greetingTimeout: 15000,
+    const client = new ImapFlow({
+      host: config.host,
+      port: config.port,
+      secure: config.secure,
+      auth: { user: config.user, pass: config.pass },
+      logger: false,
+      connectionTimeout: 20000,
+      greetingTimeout: 15000,
+    });
+
+    await client.connect();
+    const lock = await client.getMailboxLock("INBOX");
+
+    try {
+      return await fetchAndStoreNewMessages(client, config);
+    } finally {
+      lock.release();
+      await client.logout().catch(() => undefined);
+    }
   });
-
-  await client.connect();
-  const lock = await client.getMailboxLock("INBOX");
-
-  try {
-    return await fetchAndStoreNewMessages(client, config);
-  } finally {
-    lock.release();
-    await client.logout().catch(() => undefined);
-  }
 }
 
 export async function syncAllInboxesOnce(): Promise<number> {
@@ -313,7 +386,9 @@ export async function startInboxIdleWatcher(
         const lock = await client.getMailboxLock("INBOX");
 
         try {
-          const initial = await fetchAndStoreNewMessages(client, config);
+          const initial = await withMailboxLock(config.accountId, () =>
+            fetchAndStoreNewMessages(client, config),
+          );
           if (initial > 0) {
             console.log(
               `Inbox sync: ${initial} message(s) on ${config.fromEmail}`,
@@ -322,7 +397,9 @@ export async function startInboxIdleWatcher(
 
           while (idleLoops.get(config.accountId)) {
             await client.idle();
-            const n = await fetchAndStoreNewMessages(client, config);
+            const n = await withMailboxLock(config.accountId, () =>
+              fetchAndStoreNewMessages(client, config),
+            );
             if (n > 0) {
               console.log(
                 `Inbox IDLE: ${n} new message(s) on ${config.fromEmail}`,
