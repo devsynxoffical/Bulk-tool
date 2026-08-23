@@ -362,6 +362,37 @@ export async function enqueueCampaign(campaignId: string) {
   return jobs.length;
 }
 
+/** Drop stale queue jobs and re-enqueue pending recipients (fixes stuck campaigns). */
+export async function resumeCampaign(campaignId: string) {
+  const campaign = await prisma.campaign.findUnique({
+    where: { id: campaignId },
+    include: { recipients: { where: { status: "PENDING" } } },
+  });
+  if (!campaign) throw new Error("Campaign not found");
+
+  const queue = getCampaignQueue();
+
+  for (const recipient of campaign.recipients) {
+    const jobId = `${campaignId}-${recipient.id}`;
+    try {
+      const existing = await queue.getJob(jobId);
+      if (existing) await existing.remove();
+    } catch {
+      /* job may already be gone */
+    }
+  }
+
+  if (campaign.status !== "RUNNING") {
+    await prisma.campaign.update({
+      where: { id: campaignId },
+      data: { status: "RUNNING" },
+    });
+  }
+
+  startCampaignWorker();
+  return enqueueCampaign(campaignId);
+}
+
 /** Launch campaigns whose scheduledAt has passed. */
 export async function processScheduledCampaigns() {
   const due = await prisma.campaign.findMany({

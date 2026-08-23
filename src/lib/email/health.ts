@@ -98,21 +98,22 @@ export async function getInboxOpenStats(
 
 /**
  * Recompute and persist mailbox health from open rate (clamped 0–100).
- * Also auto-pauses if health &lt; 30 or bounce rate is too high.
+ * Auto-pause only on high bounce rate — low open rate lowers score but keeps sending.
  */
 export async function recalculateInboxHealth(inboxId: string) {
   const stats = await getInboxOpenStats(inboxId);
 
-  const inbox = await prisma.emailAccount.update({
+  await prisma.emailAccount.update({
     where: { id: inboxId },
     data: { healthScore: stats.healthScore },
   });
 
-  if (
-    stats.healthScore < 30 ||
-    (stats.sampleReady && stats.bounceRate >= BOUNCE_RATE_PAUSE_THRESHOLD)
-  ) {
-    if (inbox.isActive) {
+  if (stats.sampleReady && stats.bounceRate >= BOUNCE_RATE_PAUSE_THRESHOLD) {
+    const inbox = await prisma.emailAccount.findUnique({
+      where: { id: inboxId },
+      select: { isActive: true },
+    });
+    if (inbox?.isActive) {
       await prisma.emailAccount.update({
         where: { id: inboxId },
         data: { isActive: false },

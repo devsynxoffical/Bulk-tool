@@ -41,6 +41,19 @@ export function CampaignControls({
     router.refresh();
   }
 
+  async function resumeQueue() {
+    setLoading(true);
+    setError("");
+    const res = await fetch(`/api/campaigns/${id}/resume`, { method: "POST" });
+    const data = await res.json();
+    setLoading(false);
+    if (!res.ok) {
+      setError(data.error || "Resume failed");
+      return;
+    }
+    router.refresh();
+  }
+
   return (
     <div className="flex flex-col items-end gap-2">
       <div className="flex gap-2">
@@ -50,8 +63,18 @@ export function CampaignControls({
           </Button>
         ) : null}
         {status === "RUNNING" ? (
-          <Button variant="secondary" onClick={pause} disabled={loading}>
-            Pause
+          <>
+            <Button variant="outline" onClick={resumeQueue} disabled={loading}>
+              {loading ? "Working…" : "Resume sending"}
+            </Button>
+            <Button variant="secondary" onClick={pause} disabled={loading}>
+              Pause
+            </Button>
+          </>
+        ) : null}
+        {status === "PAUSED" ? (
+          <Button variant="outline" onClick={resumeQueue} disabled={loading}>
+            {loading ? "Working…" : "Resume sending"}
           </Button>
         ) : null}
       </div>

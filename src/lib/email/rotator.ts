@@ -118,7 +118,11 @@ function rankInboxes(inboxes: InboxWithDomain[]): InboxWithDomain[] {
   }
 
   const pool = bestDomainKey ? byDomain.get(bestDomainKey)! : inboxes;
-  return [...pool].sort((a, b) => a.sentToday - b.sentToday);
+  return [...pool].sort((a, b) => {
+    const healthDiff = (b.healthScore ?? 100) - (a.healthScore ?? 100);
+    if (healthDiff !== 0) return healthDiff;
+    return a.sentToday - b.sentToday;
+  });
 }
 
 /**
@@ -136,10 +140,7 @@ export async function getNextSendingInbox(
   await checkDailyReset();
 
   const inboxes = await prisma.emailAccount.findMany({
-    where: {
-      isActive: true,
-      healthScore: { gte: 30 },
-    },
+    where: { isActive: true },
     include: {
       domain: {
         select: {
@@ -173,7 +174,7 @@ export async function getMsUntilInboxAvailable(): Promise<number> {
   await checkDailyReset();
 
   const inboxes = await prisma.emailAccount.findMany({
-    where: { isActive: true, healthScore: { gte: 30 } },
+    where: { isActive: true },
   });
 
   const now = Date.now();
