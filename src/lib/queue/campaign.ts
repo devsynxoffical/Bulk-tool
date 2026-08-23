@@ -177,6 +177,9 @@ export async function processCampaignJob(
   const sendingInbox = await getNextSendingInbox();
   if (!sendingInbox) {
     const waitMs = await getMsUntilInboxAvailable();
+    console.warn(
+      `Campaign job ${job.id}: no inbox ready, delaying ${Math.round(waitMs / 1000)}s`,
+    );
     await job.moveToDelayed(Date.now() + waitMs, token ?? job.token);
     throw new DelayedError("No sending inbox available");
   }
@@ -421,6 +424,9 @@ let workerStarted = false;
 
 export function startCampaignWorker() {
   if (workerStarted) return;
+  // Production runs scripts/worker.ts separately (start-all.sh). A second Worker
+  // in the Next.js process steals jobs and causes BullMQ lock races.
+  if (process.env.SKIP_EMBEDDED_WORKER === "true") return;
   workerStarted = true;
 
   const worker = new Worker<CampaignJobData>(

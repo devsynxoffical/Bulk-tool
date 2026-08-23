@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 
@@ -11,7 +10,6 @@ export function CampaignControls({
   id: string;
   status: string;
 }) {
-  const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -25,7 +23,7 @@ export function CampaignControls({
       setError(data.error || "Launch failed");
       return;
     }
-    router.refresh();
+    window.location.reload();
   }
 
   async function pause() {
@@ -38,7 +36,7 @@ export function CampaignControls({
       setError(data.error || "Pause failed");
       return;
     }
-    router.refresh();
+    window.location.reload();
   }
 
   async function resumeQueue() {
@@ -51,7 +49,7 @@ export function CampaignControls({
       setError(data.error || "Resume failed");
       return;
     }
-    router.refresh();
+    window.location.reload();
   }
 
   return (

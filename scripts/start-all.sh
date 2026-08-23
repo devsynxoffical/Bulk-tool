@@ -47,6 +47,9 @@ cleanup() {
 }
 trap cleanup SIGTERM SIGINT
 
+# Worker runs in scripts/worker.ts — do not start a duplicate inside Next.js
+export SKIP_EMBEDDED_WORKER=true
+
 # Start Next.js web application server (Foreground)
 echo "[4/4] Starting Next.js Web Server on port ${PORT:-3000}..."
 exec npx next start -p "${PORT:-3000}"
