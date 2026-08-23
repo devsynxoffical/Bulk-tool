@@ -105,6 +105,8 @@ function formatAccount(
     warmupStartedAt: warmup.startedAt.toISOString(),
     isActive: acc.isActive,
     hasPassword: Boolean(acc.password),
+    lastInboxSyncAt: acc.lastInboxSyncAt?.toISOString() ?? null,
+    inboxSyncError: acc.inboxSyncError ?? null,
     createdAt: acc.createdAt.toISOString(),
   };
 }

@@ -15,12 +15,14 @@ import {
   ShieldCheck,
   Globe,
   Inbox,
+  MailOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const nav = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
   { href: "/emails", label: "Sent Email Tracker", icon: MailCheck },
+  { href: "/inbox", label: "Mailbox Inbox", icon: MailOpen },
   { href: "/compose", label: "Compose Email", icon: PenSquare },
   { href: "/campaigns", label: "Outreach Campaigns", icon: Megaphone },
   { href: "/templates", label: "Email Templates", icon: FileText },

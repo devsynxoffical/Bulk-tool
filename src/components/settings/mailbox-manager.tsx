@@ -65,6 +65,8 @@ type EmailAccount = {
   daysUntilNextStage: number | null;
   isActive: boolean;
   hasPassword: boolean;
+  lastInboxSyncAt?: string | null;
+  inboxSyncError?: string | null;
 };
 
 type CapacityStats = {
@@ -429,6 +431,15 @@ export function MailboxManager() {
                       {acc.openRate != null ? ` · Open ${acc.openRate}%` : ""}
                     </span>
                   </div>
+                  {acc.inboxSyncError ? (
+                    <p className="text-[11px] text-amber-700 font-medium">
+                      Inbox sync: {acc.inboxSyncError}
+                    </p>
+                  ) : acc.lastInboxSyncAt ? (
+                    <p className="text-[11px] text-zinc-500">
+                      Inbox synced {new Date(acc.lastInboxSyncAt).toLocaleString()}
+                    </p>
+                  ) : null}
                   {acc.warmupEnabled && !acc.warmupComplete && (
                     <div className="space-y-1.5 pt-1">
                       <div className="flex justify-between text-[11px] text-amber-800 font-medium">

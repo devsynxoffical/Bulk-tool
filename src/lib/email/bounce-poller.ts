@@ -1,78 +1,22 @@
-import { prisma } from "@/lib/prisma";
+import {
+  isBounceNotification,
+  resolveMailboxImapConfigs,
+  type MailboxImapConfig,
+} from "./imap-config";
 import {
   parseBouncedRecipientFromBody,
   recordBounce,
 } from "./bounce-handler";
 
-/** Last seen IMAP UID per mailbox (in-memory; resets on worker restart). */
-const lastPollUidByAccount = new Map<string, number>();
+/** Last seen IMAP UID per mailbox for bounce-only polling (in-memory). */
+const lastBounceUidByAccount = new Map<string, number>();
 
-type MailboxImapConfig = {
-  accountId: string;
-  host: string;
-  port: number;
-  secure: boolean;
-  user: string;
-  pass: string;
-};
-
-function imapHostFromAccount(host: string | null, fromEmail: string): string {
-  if (host?.trim()) return host.trim();
-  const domain = fromEmail.split("@")[1];
-  return domain ? `mail.${domain}` : "";
-}
-
-async function resolveMailboxConfigs(): Promise<MailboxImapConfig[]> {
-  const explicitHost = process.env.BOUNCE_IMAP_HOST?.trim();
-  const explicitUser = process.env.BOUNCE_IMAP_USER?.trim();
-  const explicitPass = process.env.BOUNCE_IMAP_PASSWORD?.trim();
-
-  if (explicitHost && explicitUser && explicitPass) {
-    return [
-      {
-        accountId: "env-bounce",
-        host: explicitHost,
-        port: Number(process.env.BOUNCE_IMAP_PORT || 993),
-        secure: process.env.BOUNCE_IMAP_SECURE !== "false",
-        user: explicitUser,
-        pass: explicitPass,
-      },
-    ];
-  }
-
-  const accounts = await prisma.emailAccount.findMany({
-    where: {
-      isActive: true,
-      password: { not: "" },
-      username: { not: "" },
-    },
-    orderBy: { updatedAt: "desc" },
-  });
-
-  return accounts
-    .map((acc) => {
-      const host = imapHostFromAccount(acc.host, acc.fromEmail);
-      const user = acc.username?.trim() || acc.fromEmail;
-      const pass = acc.password?.trim();
-      if (!host || !user || !pass) return null;
-      return {
-        accountId: acc.id,
-        host,
-        port: 993,
-        secure: true,
-        user,
-        pass,
-      };
-    })
-    .filter((c): c is MailboxImapConfig => c !== null);
-}
-
-async function pollOneMailbox(config: MailboxImapConfig): Promise<number> {
+async function pollBouncesOnMailbox(config: MailboxImapConfig): Promise<number> {
   const { ImapFlow } = await import("imapflow");
   const { simpleParser } = await import("mailparser");
 
   let processed = 0;
-  let lastPollUid = lastPollUidByAccount.get(config.accountId) || 0;
+  let lastPollUid = lastBounceUidByAccount.get(config.accountId) || 0;
 
   const client = new ImapFlow({
     host: config.host,
@@ -97,16 +41,9 @@ async function pollOneMailbox(config: MailboxImapConfig): Promise<number> {
       const body = `${parsed.text || ""}\n${parsed.html || ""}`;
       const subject = parsed.subject || "";
 
-      const isBounce =
-        subject.toLowerCase().includes("delivery") ||
-        subject.toLowerCase().includes("undeliverable") ||
-        subject.toLowerCase().includes("failure") ||
-        subject.toLowerCase().includes("returned mail") ||
-        body.toLowerCase().includes("final-recipient");
-
       if (msg.uid) lastPollUid = Math.max(lastPollUid, msg.uid);
 
-      if (!isBounce) continue;
+      if (!isBounceNotification(subject, body)) continue;
 
       const email = parseBouncedRecipientFromBody(body);
       if (email) {
@@ -124,23 +61,22 @@ async function pollOneMailbox(config: MailboxImapConfig): Promise<number> {
   }
 
   await client.logout();
-  lastPollUidByAccount.set(config.accountId, lastPollUid);
+  lastBounceUidByAccount.set(config.accountId, lastPollUid);
   return processed;
 }
 
 /**
  * Poll sending mailboxes for DSN bounce notifications.
- * Uses every active mailbox from the app DB — no per-mailbox Railway env vars needed.
- * Optional override: BOUNCE_IMAP_HOST / USER / PASSWORD.
+ * Inbound replies are handled by inbox-poller.ts (IMAP IDLE).
  */
 export async function pollBounceMailboxOnce(): Promise<number> {
-  const configs = await resolveMailboxConfigs();
+  const configs = await resolveMailboxImapConfigs();
   if (configs.length === 0) return 0;
 
   let total = 0;
   for (const config of configs) {
     try {
-      const n = await pollOneMailbox(config);
+      const n = await pollBouncesOnMailbox(config);
       total += n;
     } catch (e) {
       console.warn(

@@ -16,6 +16,7 @@
     "worker": "tsx scripts/worker.ts",
     "smtp-relay": "tsx smtp-relay/server.ts",
     "bounce:poll": "tsx -e \"import { pollBounceMailboxOnce } from './src/lib/email/bounce-poller.ts'; pollBounceMailboxOnce().then(n => console.log('Processed', n))\"",
+    "inbox:sync": "tsx -e \"import { syncAllInboxesOnce } from './src/lib/email/inbox-poller.ts'; syncAllInboxesOnce().then(n => console.log('Synced', n))\"",
     "scraper": "cd Gmap-scrapper && .venv/bin/python server.py",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",

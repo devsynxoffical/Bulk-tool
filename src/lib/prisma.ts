@@ -146,6 +146,48 @@ export async function ensureDbSchema() {
       CREATE INDEX IF NOT EXISTS "CampaignRecipient_inboxId_idx" ON "CampaignRecipient"("inboxId");
     `);
 
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "lastInboxPollUid" INTEGER NOT NULL DEFAULT 0;
+    `);
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "lastInboxSyncAt" TIMESTAMP(3);
+    `);
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "inboxSyncError" TEXT;
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "InboundEmail" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "inboxId" TEXT NOT NULL,
+        "imapUid" INTEGER NOT NULL,
+        "messageId" TEXT,
+        "fromEmail" TEXT NOT NULL,
+        "fromName" TEXT,
+        "toEmail" TEXT NOT NULL,
+        "subject" TEXT,
+        "bodyText" TEXT,
+        "bodyHtml" TEXT,
+        "isRead" BOOLEAN NOT NULL DEFAULT false,
+        "isBounce" BOOLEAN NOT NULL DEFAULT false,
+        "inReplyTo" TEXT,
+        "relatedOutboundId" TEXT,
+        "contactId" TEXT,
+        "receivedAt" TIMESTAMP(3) NOT NULL,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT "InboundEmail_inboxId_imapUid_key" UNIQUE ("inboxId", "imapUid")
+      );
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "InboundEmail_inboxId_receivedAt_idx" ON "InboundEmail"("inboxId", "receivedAt");
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "InboundEmail_inboxId_isRead_idx" ON "InboundEmail"("inboxId", "isRead");
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "InboundEmail_fromEmail_idx" ON "InboundEmail"("fromEmail");
+    `);
+
     isEnsured = true;
   } catch (err) {
     console.error("Auto-schema sync warning:", err);

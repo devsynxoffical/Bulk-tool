@@ -88,11 +88,43 @@ model EmailAccount {
   warmupStage   Int            @default(1)
   warmupStartedAt DateTime?
   isActive      Boolean        @default(true)
+  lastInboxPollUid Int         @default(0)
+  lastInboxSyncAt  DateTime?
+  inboxSyncError   String?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
+  inboundEmails InboundEmail[]
 
   @@index([domainId])
   @@index([isActive, sentToday])
+}
+
+model InboundEmail {
+  id                  String       @id @default(cuid())
+  inboxId             String
+  inbox               EmailAccount @relation(fields: [inboxId], references: [id], onDelete: Cascade)
+  imapUid             Int
+  messageId           String?
+  fromEmail           String
+  fromName            String?
+  toEmail             String
+  subject             String?
+  bodyText            String?      @db.Text
+  bodyHtml            String?      @db.Text
+  isRead              Boolean      @default(false)
+  isBounce            Boolean      @default(false)
+  inReplyTo           String?
+  relatedOutboundId   String?
+  contactId           String?
+  contact             Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  receivedAt          DateTime
+  createdAt           DateTime     @default(now())
+
+  @@unique([inboxId, imapUid])
+  @@index([inboxId, receivedAt])
+  @@index([inboxId, isRead])
+  @@index([fromEmail])
+  @@index([messageId])
 }
 
 model SendingDomain {
@@ -152,6 +184,7 @@ model Contact {
   messages      Message[]
   recipients    CampaignRecipient[]
   conversations Conversation[]
+  inboundEmails InboundEmail[]
 }
 
 model Lead {
