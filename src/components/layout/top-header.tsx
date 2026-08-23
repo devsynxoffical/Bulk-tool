@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 const titles: Record<string, { title: string; crumb: string }> = {
   "/": { title: "Overview", crumb: "DEVSYNX Email Suite" },
   "/emails": { title: "Sent Email Tracker", crumb: "Email Outbox" },
+  "/inbox": { title: "Mailbox Inbox", crumb: "Incoming Mail" },
   "/compose": { title: "Compose Email", crumb: "Direct Email" },
   "/campaigns": { title: "Cold Campaigns", crumb: "Outreach" },
   "/campaigns/new": { title: "New Campaign", crumb: "Cold Outreach" },
@@ -16,6 +17,8 @@ const titles: Record<string, { title: string; crumb: string }> = {
   "/verifier": { title: "Email Verifier", crumb: "Lead Validation" },
   "/contacts": { title: "Client Database", crumb: "Audience" },
   "/templates": { title: "Email Templates", crumb: "Templates" },
+  "/mailboxes": { title: "Sending Mailboxes", crumb: "Infrastructure" },
+  "/domains": { title: "Sending Domains", crumb: "Infrastructure" },
   "/settings": { title: "Engine Settings", crumb: "Infrastructure" },
 };
 

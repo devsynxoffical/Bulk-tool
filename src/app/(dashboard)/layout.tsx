@@ -17,7 +17,7 @@ export default async function DashboardLayout({
     <SessionProvider>
       <div className="flex h-screen overflow-hidden bg-zinc-50">
         <Sidebar />
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <TopHeader
             userName={session.user.name}
             userEmail={session.user.email}
