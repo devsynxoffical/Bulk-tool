@@ -19,15 +19,25 @@ type ParsedMail = {
   from?: { value?: Array<{ address?: string; name?: string }> };
   to?: { value?: Array<{ address?: string }> };
   messageId?: string;
-  inReplyTo?: string;
-  references?: string[];
+  inReplyTo?: string | string[];
+  references?: string | string[];
   date?: Date;
 };
 
 function normalizeMessageId(value: unknown): string | null {
   if (!value) return null;
-  const raw = Array.isArray(value) ? value[0] : String(value);
+  const raw = Array.isArray(value) ? String(value[0] ?? "") : String(value);
   return raw.replace(/^<|>$/g, "").trim() || null;
+}
+
+/** mailparser may return references as a string OR string[]. */
+function normalizeReferences(refs: unknown): string[] {
+  if (!refs) return [];
+  const list = Array.isArray(refs) ? refs : [refs];
+  return list
+    .flatMap((r) => String(r).split(/\s+/))
+    .map((r) => normalizeMessageId(r))
+    .filter(Boolean) as string[];
 }
 
 async function matchOutboundMessage(
@@ -91,9 +101,7 @@ async function upsertInboundFromParsed(
     config.fromEmail.toLowerCase();
   const messageId = normalizeMessageId(parsed.messageId);
   const inReplyTo = normalizeMessageId(parsed.inReplyTo);
-  const references = (parsed.references || [])
-    .map((r: string) => normalizeMessageId(r))
-    .filter(Boolean) as string[];
+  const references = normalizeReferences(parsed.references);
 
   const contact = await prisma.contact.findFirst({
     where: { email: { equals: fromEmail, mode: "insensitive" } },
@@ -103,46 +111,58 @@ async function upsertInboundFromParsed(
   const relatedOutboundId = await matchOutboundMessage(inReplyTo, references);
   const receivedAt = parsed.date || new Date();
 
-  await prisma.inboundEmail.upsert({
-    where: {
-      inboxId_imapUid: {
+  try {
+    await prisma.inboundEmail.upsert({
+      where: {
+        inboxId_imapUid: {
+          inboxId: config.accountId,
+          imapUid: uid,
+        },
+      },
+      create: {
         inboxId: config.accountId,
         imapUid: uid,
+        messageId,
+        fromEmail,
+        fromName,
+        toEmail,
+        subject,
+        bodyText: bodyText.slice(0, 50000) || null,
+        bodyHtml: bodyHtml.slice(0, 100000) || null,
+        isBounce: false,
+        inReplyTo,
+        relatedOutboundId,
+        contactId: contact?.id,
+        receivedAt,
       },
-    },
-    create: {
-      inboxId: config.accountId,
-      imapUid: uid,
-      messageId,
-      fromEmail,
-      fromName,
-      toEmail,
-      subject,
-      bodyText: bodyText.slice(0, 50000) || null,
-      bodyHtml: bodyHtml.slice(0, 100000) || null,
-      isBounce: false,
-      inReplyTo,
-      relatedOutboundId,
-      contactId: contact?.id,
-      receivedAt,
-    },
-    update: {},
-  });
+      update: {},
+    });
+  } catch (e) {
+    // Concurrent sync / IDLE race on unique (inboxId, imapUid)
+    const code =
+      e && typeof e === "object" && "code" in e
+        ? String((e as { code: unknown }).code)
+        : "";
+    if (code === "P2002") return false;
+    throw e;
+  }
 
   return true;
 }
 
+type ImapClient = {
+  status: (
+    path: string,
+    query: { uidNext?: boolean },
+  ) => Promise<{ uidNext?: number }>;
+  fetch: (
+    range: string,
+    query: { uid?: boolean; source?: boolean },
+  ) => AsyncIterable<{ uid?: number; source?: Buffer }>;
+};
+
 async function fetchAndStoreNewMessages(
-  client: {
-    status: (
-      path: string,
-      query: { uidNext?: boolean },
-    ) => Promise<{ uidNext?: number }>;
-    fetch: (
-      range: string,
-      query: { uid?: boolean; source?: boolean },
-    ) => AsyncIterable<{ uid?: number; source?: Buffer }>;
-  },
+  client: ImapClient,
   config: MailboxImapConfig,
 ): Promise<number> {
   const { simpleParser } = await import("mailparser");
@@ -155,14 +175,27 @@ async function fetchAndStoreNewMessages(
 
   let lastUid = account.lastInboxPollUid || 0;
   let newCount = 0;
-  let searchFrom = 1;
 
+  const status = await client.status("INBOX", { uidNext: true });
+  const uidNext = status.uidNext || 1;
+
+  let searchFrom: number;
   if (lastUid > 0) {
     searchFrom = lastUid + 1;
   } else {
-    const status = await client.status("INBOX", { uidNext: true });
-    const uidNext = status.uidNext || 1;
     searchFrom = Math.max(1, uidNext - INITIAL_BACKFILL_COUNT);
+  }
+
+  // Avoid ImapFlow "Command failed" on empty UID ranges
+  if (searchFrom >= uidNext) {
+    await prisma.emailAccount.update({
+      where: { id: config.accountId },
+      data: {
+        lastInboxSyncAt: new Date(),
+        inboxSyncError: null,
+      },
+    });
+    return 0;
   }
 
   for await (const msg of client.fetch(`${searchFrom}:*`, {
@@ -172,9 +205,18 @@ async function fetchAndStoreNewMessages(
     if (!msg.uid || !msg.source) continue;
     lastUid = Math.max(lastUid, msg.uid);
 
-    const parsed = (await simpleParser(msg.source)) as ParsedMail;
-    const stored = await upsertInboundFromParsed(config, msg.uid, parsed);
-    if (stored) newCount += 1;
+    try {
+      const parsed = (await simpleParser(msg.source)) as ParsedMail;
+      const stored = await upsertInboundFromParsed(config, msg.uid, parsed);
+      if (stored) newCount += 1;
+    } catch (e) {
+      const msgText = e instanceof Error ? e.message : String(e);
+      console.warn(
+        `Inbox parse/store failed for ${config.fromEmail} uid=${msg.uid}:`,
+        msgText,
+      );
+      // Advance UID cursor so one bad message doesn't block the mailbox forever
+    }
   }
 
   await prisma.emailAccount.update({
@@ -211,7 +253,7 @@ export async function syncInboxMailbox(
     return await fetchAndStoreNewMessages(client, config);
   } finally {
     lock.release();
-    await client.logout();
+    await client.logout().catch(() => undefined);
   }
 }
 
@@ -224,6 +266,9 @@ export async function syncAllInboxesOnce(): Promise<number> {
     try {
       const n = await syncInboxMailbox(config);
       total += n;
+      if (n > 0) {
+        console.log(`Inbox sync: ${n} new on ${config.fromEmail}`);
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.warn(`Inbox sync skipped for ${config.fromEmail}:`, msg);
@@ -288,7 +333,7 @@ export async function startInboxIdleWatcher(
           lock.release();
         }
 
-        await client.logout();
+        await client.logout().catch(() => undefined);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         console.warn(`Inbox IDLE reconnect for ${config.fromEmail}:`, msg);

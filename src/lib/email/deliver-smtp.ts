@@ -7,6 +7,9 @@ export type SmtpDeliveryPayload = {
   text: string;
   from: string;
   listUnsubscribe?: string;
+  /** Threading headers for replies */
+  inReplyTo?: string;
+  references?: string;
   smtp: {
     host: string;
     port: number;
@@ -38,15 +41,26 @@ export async function deliverViaSmtp(payload: SmtpDeliveryPayload) {
     dkim: payload.dkim,
   } as nodemailer.TransportOptions);
 
+  const headers: Record<string, string> = {};
+  if (payload.listUnsubscribe) {
+    headers["List-Unsubscribe"] = `<${payload.listUnsubscribe}>`;
+  }
+  if (payload.inReplyTo) {
+    headers["In-Reply-To"] = payload.inReplyTo.startsWith("<")
+      ? payload.inReplyTo
+      : `<${payload.inReplyTo}>`;
+  }
+  if (payload.references) {
+    headers.References = payload.references;
+  }
+
   const info = await transporter.sendMail({
     from: payload.from,
     to: payload.to,
     subject: payload.subject,
     html: payload.html,
     text: payload.text,
-    headers: payload.listUnsubscribe
-      ? { "List-Unsubscribe": `<${payload.listUnsubscribe}>` }
-      : undefined,
+    headers: Object.keys(headers).length > 0 ? headers : undefined,
     attachments:
       payload.attachments && payload.attachments.length > 0
         ? payload.attachments.map((a) => ({

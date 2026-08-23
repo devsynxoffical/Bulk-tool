@@ -9,25 +9,50 @@ export type MailboxImapConfig = {
   secure: boolean;
   user: string;
   pass: string;
+  isActive: boolean;
 };
 
-/** Resolve IMAP host — prefers SMTP host saved on the mailbox (works for cPanel relays). */
+/** SMTP relays often don't speak IMAP — prefer mail.{domain} for those. */
+function isLikelySmtpRelayOnly(host: string): boolean {
+  const h = host.toLowerCase();
+  return (
+    h.includes("relay") ||
+    h.startsWith("smtp.") ||
+    h.includes("sendgrid") ||
+    h.includes("mailgun") ||
+    h.includes("amazonaws") ||
+    h.includes("postmark") ||
+    h.includes("sparkpost")
+  );
+}
+
+/**
+ * Resolve IMAP host for a mailbox.
+ * Prefer mail.{from-domain} over SMTP relay hosts (relay.*.com usually has no IMAP).
+ */
 export function imapHostFromAccount(
   smtpHost: string | null | undefined,
   fromEmail: string,
 ): string {
-  if (smtpHost?.trim()) return smtpHost.trim();
-
-  const domain = fromEmail.split("@")[1]?.trim().toLowerCase();
-  if (!domain) return "";
+  const domain = fromEmail.split("@")[1]?.trim().toLowerCase() || "";
 
   const envHost = process.env.IMAP_HOST?.trim();
   if (envHost) return envHost.replace("{domain}", domain);
 
-  return `mail.${domain}`;
+  const smtp = smtpHost?.trim() || "";
+  if (smtp && !isLikelySmtpRelayOnly(smtp)) return smtp;
+
+  if (domain) return `mail.${domain}`;
+  return smtp;
 }
 
-export async function resolveMailboxImapConfigs(): Promise<MailboxImapConfig[]> {
+/**
+ * All mailboxes with IMAP credentials (active + paused).
+ * Paused inboxes still receive replies — they must sync.
+ */
+export async function resolveMailboxImapConfigs(options?: {
+  activeOnly?: boolean;
+}): Promise<MailboxImapConfig[]> {
   const explicitHost = process.env.BOUNCE_IMAP_HOST?.trim();
   const explicitUser = process.env.BOUNCE_IMAP_USER?.trim();
   const explicitPass = process.env.BOUNCE_IMAP_PASSWORD?.trim();
@@ -43,17 +68,18 @@ export async function resolveMailboxImapConfigs(): Promise<MailboxImapConfig[]> 
         secure: process.env.BOUNCE_IMAP_SECURE !== "false",
         user: explicitUser,
         pass: explicitPass,
+        isActive: true,
       },
     ];
   }
 
   const accounts = await prisma.emailAccount.findMany({
     where: {
-      isActive: true,
+      ...(options?.activeOnly ? { isActive: true } : {}),
       password: { not: "" },
       username: { not: "" },
     },
-    orderBy: { updatedAt: "desc" },
+    orderBy: [{ isActive: "desc" }, { fromEmail: "asc" }],
   });
 
   return accounts
@@ -71,6 +97,7 @@ export async function resolveMailboxImapConfigs(): Promise<MailboxImapConfig[]> 
         secure: true,
         user,
         pass,
+        isActive: acc.isActive,
       };
     })
     .filter((c): c is MailboxImapConfig => c !== null);

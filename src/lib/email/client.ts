@@ -27,15 +27,22 @@ export async function sendEmailMessage(params: {
   account?: Awaited<ReturnType<typeof getActiveEmailAccount>>;
   /** Campaign sends apply per-inbox cooldown; manual/test sends should pass false. */
   applySendCooldown?: boolean;
+  /** Skip suppression list (inbox replies to people who wrote you). */
+  skipSuppression?: boolean;
+  /** Threading headers when replying */
+  inReplyTo?: string;
+  references?: string;
 }) {
   const recipient = params.to.trim().toLowerCase();
 
   // 1. Suppression check
-  const suppressed = await prisma.suppressionList.findUnique({
-    where: { email: recipient },
-  });
-  if (suppressed) {
-    throw new Error(`Email ${recipient} is on the Suppression List (${suppressed.reason}). Send aborted.`);
+  if (!params.skipSuppression) {
+    const suppressed = await prisma.suppressionList.findUnique({
+      where: { email: recipient },
+    });
+    if (suppressed) {
+      throw new Error(`Email ${recipient} is on the Suppression List (${suppressed.reason}). Send aborted.`);
+    }
   }
 
   const account = params.account || (await getActiveEmailAccount());
@@ -159,6 +166,8 @@ export async function sendEmailMessage(params: {
       ? `"${account.fromName}" <${account.fromEmail}>`
       : account.fromEmail,
     listUnsubscribe: unsubUrl,
+    inReplyTo: params.inReplyTo,
+    references: params.references,
     smtp: {
       host: account.host,
       port: account.port || 587,

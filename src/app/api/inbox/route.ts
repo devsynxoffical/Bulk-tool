@@ -11,16 +11,19 @@ export async function GET(req: NextRequest) {
   const unreadOnly = req.nextUrl.searchParams.get("unreadOnly") === "true";
 
   try {
+    // Show ALL mailboxes (active + paused) so users can filter any inbox
     const mailboxes = await prisma.emailAccount.findMany({
-      where: { isActive: true },
       select: {
         id: true,
         fromEmail: true,
         fromName: true,
+        isActive: true,
         lastInboxSyncAt: true,
         inboxSyncError: true,
+        username: true,
+        password: true,
       },
-      orderBy: { fromEmail: "asc" },
+      orderBy: [{ isActive: "desc" }, { fromEmail: "asc" }],
     });
 
     const unreadCounts = await prisma.inboundEmail.groupBy({
@@ -69,12 +72,20 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       mailboxes: mailboxes.map((mb) => ({
-        ...mb,
+        id: mb.id,
+        fromEmail: mb.fromEmail,
+        fromName: mb.fromName,
+        isActive: mb.isActive,
+        lastInboxSyncAt: mb.lastInboxSyncAt,
+        inboxSyncError: mb.inboxSyncError,
+        canSync: Boolean(mb.username?.trim() && mb.password?.trim()),
         unreadCount: unreadByInbox.get(mb.id) || 0,
       })),
       stats: {
         total: messages.length,
         totalUnread,
+        mailboxCount: mailboxes.length,
+        activeMailboxCount: mailboxes.filter((m) => m.isActive).length,
       },
       messages: messages.map((m) => ({
         id: m.id,
@@ -89,6 +100,7 @@ export async function GET(req: NextRequest) {
         bodyHtml: m.bodyHtml || "",
         isRead: m.isRead,
         receivedAt: m.receivedAt,
+        messageId: m.messageId,
         relatedOutboundId: m.relatedOutboundId,
         contact: m.contact,
       })),

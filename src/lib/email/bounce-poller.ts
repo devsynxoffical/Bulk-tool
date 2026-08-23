@@ -31,7 +31,13 @@ async function pollBouncesOnMailbox(config: MailboxImapConfig): Promise<number> 
   const lock = await client.getMailboxLock("INBOX");
 
   try {
+    const status = await client.status("INBOX", { uidNext: true });
+    const uidNext = status.uidNext || 1;
     const searchFrom = lastPollUid > 0 ? lastPollUid + 1 : 1;
+    if (searchFrom >= uidNext) {
+      lastBounceUidByAccount.set(config.accountId, lastPollUid);
+      return 0;
+    }
     for await (const msg of client.fetch(`${searchFrom}:*`, {
       uid: true,
       source: true,
