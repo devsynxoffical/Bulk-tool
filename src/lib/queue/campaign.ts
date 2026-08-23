@@ -1,4 +1,4 @@
-import { Queue, Worker, type Job } from "bullmq";
+import { DelayedError, Queue, Worker, type Job } from "bullmq";
 import IORedis from "ioredis";
 import { prisma } from "@/lib/prisma";
 import { renderTemplateString, sendEmailMessage } from "@/lib/email/client";
@@ -108,7 +108,10 @@ function isSmtpAuthFailure(message: string): boolean {
   );
 }
 
-export async function processCampaignJob(job: Job<CampaignJobData>) {
+export async function processCampaignJob(
+  job: Job<CampaignJobData>,
+  token?: string,
+) {
   await checkDailyReset();
 
   const throttleMs = await getThrottleDelayMs();
@@ -176,8 +179,8 @@ export async function processCampaignJob(job: Job<CampaignJobData>) {
   const sendingInbox = await getNextSendingInbox();
   if (!sendingInbox) {
     const waitMs = await getMsUntilInboxAvailable();
-    await job.moveToDelayed(Date.now() + waitMs, job.token);
-    return;
+    await job.moveToDelayed(Date.now() + waitMs, token ?? job.token);
+    throw new DelayedError("No sending inbox available");
   }
 
   try {
@@ -282,8 +285,10 @@ export async function processCampaignJob(job: Job<CampaignJobData>) {
       console.warn(
         `SMTP auth failed for ${sendingInbox.fromEmail} — inbox penalized, recipient re-queued`,
       );
-      await job.moveToDelayed(Date.now() + 60_000, job.token);
-      return;
+      await job.moveToDelayed(Date.now() + 60_000, token ?? job.token);
+      throw new DelayedError(
+        `SMTP auth failed for ${sendingInbox.fromEmail} — retry another mailbox`,
+      );
     }
 
     if (recipient.contact.email && isLikelySmtpBounce(message)) {
@@ -394,7 +399,7 @@ export function startCampaignWorker() {
 
   const worker = new Worker<CampaignJobData>(
     "campaign-messages",
-    async (job) => processCampaignJob(job),
+    async (job, token) => processCampaignJob(job, token),
     {
       connection: getConnection(),
       concurrency: WORKER_CONCURRENCY,
