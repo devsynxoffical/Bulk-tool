@@ -259,6 +259,44 @@ export function MailboxManager() {
     loadData();
   }
 
+  async function toggleActive(acc: EmailAccount) {
+    const next = !acc.isActive;
+    if (
+      next &&
+      !confirm(
+        `Resume ${acc.fromEmail}?\n\nIt was likely auto-paused for high bounce rate. Only resume if your list quality is cleaner, or sends may pause again.`,
+      )
+    ) {
+      return;
+    }
+    const res = await fetch("/api/settings/email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: acc.id, isActive: next }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setMessage({
+        ok: false,
+        text:
+          typeof data.error === "string"
+            ? data.error
+            : "Failed to update mailbox status.",
+      });
+      return;
+    }
+    setMessage({
+      ok: true,
+      text:
+        typeof data.message === "string"
+          ? data.message
+          : next
+            ? "Mailbox resumed."
+            : "Mailbox paused.",
+    });
+    loadData();
+  }
+
   async function deleteInbox(id: string) {
     if (!confirm("Remove this mailbox from rotation?")) return;
     await fetch(`/api/settings/email?id=${id}`, { method: "DELETE" });
@@ -460,7 +498,19 @@ export function MailboxManager() {
                   {acc.warmupComplete && (
                     <p className="text-[11px] text-emerald-700 font-medium">Warmup complete — full capacity</p>
                   )}
-                  <div className="flex justify-end gap-1 pt-2 border-t border-zinc-100">
+                  <div className="flex flex-wrap justify-end gap-1 pt-2 border-t border-zinc-100">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={`h-7 text-xs ${
+                        acc.isActive
+                          ? "text-zinc-600"
+                          : "text-emerald-700 font-semibold"
+                      }`}
+                      onClick={() => void toggleActive(acc)}
+                    >
+                      {acc.isActive ? "Pause" : "Resume"}
+                    </Button>
                     <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => startEdit(acc)}>
                       <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
                     </Button>

@@ -42,6 +42,11 @@ const signatureOnlySchema = z.object({
   signature: z.string(),
 });
 
+const toggleActiveSchema = z.object({
+  id: z.string().min(1),
+  isActive: z.boolean(),
+});
+
 async function resolveDomainId(
   fromEmail: string,
   explicitDomainId?: string | null,
@@ -209,6 +214,27 @@ export async function POST(req: NextRequest) {
         data: { signature: sigOnly.data.signature },
       });
       return NextResponse.json({ success: true, account });
+    }
+
+    const toggleOnly = toggleActiveSchema.safeParse(body);
+    if (
+      toggleOnly.success &&
+      body &&
+      typeof body === "object" &&
+      !("host" in body) &&
+      !("fromEmail" in body)
+    ) {
+      const account = await prisma.emailAccount.update({
+        where: { id: toggleOnly.data.id },
+        data: { isActive: toggleOnly.data.isActive },
+      });
+      return NextResponse.json({
+        success: true,
+        account,
+        message: toggleOnly.data.isActive
+          ? "Mailbox resumed — back in send rotation."
+          : "Mailbox paused — removed from send rotation.",
+      });
     }
 
     const parsed = createSchema.safeParse(body);
