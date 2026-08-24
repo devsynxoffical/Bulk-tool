@@ -180,16 +180,97 @@ async function storeInboundFromParsed(
 }
 
 type ImapClient = {
-  status: (
-    path: string,
-    query: { uidNext?: boolean },
-  ) => Promise<{ uidNext?: number }>;
+  search: (
+    query: Record<string, unknown>,
+    options?: { uid?: boolean },
+  ) => Promise<number[] | false>;
   fetch: (
-    range: string,
-    query: { uid?: boolean; source?: boolean },
+    range: string | number[],
+    query: { uid?: boolean; source?: boolean; flags?: boolean },
   ) => AsyncIterable<{ uid?: number; source?: Buffer }>;
   mailbox?: { exists?: number; uidNext?: number } | false;
 };
+
+const FETCH_CHUNK_SIZE = 40;
+
+function imapErrorMessage(e: unknown): string {
+  if (!e || typeof e !== "object") return String(e);
+  const err = e as {
+    message?: string;
+    responseText?: string;
+    response?: string;
+    code?: string;
+  };
+  const parts = [
+    err.message,
+    err.responseText,
+    typeof err.response === "string" ? err.response : null,
+    err.code,
+  ].filter(Boolean);
+  const joined = [...new Set(parts)].join(" — ");
+  return joined.slice(0, 500) || "Unknown IMAP error";
+}
+
+/** Swallow socket errors so they don't crash the Node process (ETIMEDOUT etc.). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function attachImapErrorGuard(client: any, label: string) {
+  client.on("error", (err: unknown) => {
+    console.warn(`IMAP socket error (${label}):`, imapErrorMessage(err));
+  });
+}
+
+/**
+ * Resolve uidNext from the already-selected mailbox.
+ * Never call STATUS while INBOX is selected — many cPanel/Dovecot hosts
+ * reply NO / "Command failed" to that.
+ */
+function selectedUidNext(client: ImapClient): number {
+  if (client.mailbox && typeof client.mailbox === "object") {
+    return client.mailbox.uidNext || 1;
+  }
+  return 1;
+}
+
+async function listUidsInRange(
+  client: ImapClient,
+  searchFrom: number,
+  uidNext: number,
+): Promise<number[]> {
+  if (searchFrom >= uidNext) return [];
+
+  // Prefer SEARCH so we only touch UIDs that still exist (gaps from deletes
+  // make blind FETCH ranges fail with "Command failed" on some hosts).
+  try {
+    const found = await client.search(
+      { uid: `${searchFrom}:${uidNext - 1}` },
+      { uid: true },
+    );
+    if (Array.isArray(found)) {
+      return found.filter((u) => Number.isFinite(u) && u >= searchFrom).sort(
+        (a, b) => a - b,
+      );
+    }
+  } catch (e) {
+    console.warn(
+      `IMAP SEARCH failed, falling back to FETCH *:`,
+      imapErrorMessage(e).slice(0, 200),
+    );
+  }
+
+  // Fallback: open-ended UID fetch (more tolerant than closed ranges)
+  const uids: number[] = [];
+  try {
+    for await (const msg of client.fetch(`${searchFrom}:*`, {
+      uid: true,
+      flags: true,
+    })) {
+      if (msg.uid && msg.uid < uidNext) uids.push(msg.uid);
+    }
+  } catch (e) {
+    console.warn(`IMAP UID list fetch failed:`, imapErrorMessage(e).slice(0, 200));
+  }
+  return uids.sort((a, b) => a - b);
+}
 
 async function fetchAndStoreNewMessages(
   client: ImapClient,
@@ -207,16 +288,7 @@ async function fetchAndStoreNewMessages(
   let lastUid = account.lastInboxPollUid || 0;
   let newCount = 0;
 
-  let uidNext = 1;
-  try {
-    const status = await client.status("INBOX", { uidNext: true });
-    uidNext = status.uidNext || 1;
-  } catch {
-    // Fall back to mailbox lock metadata if STATUS fails
-    if (client.mailbox && typeof client.mailbox === "object") {
-      uidNext = client.mailbox.uidNext || 1;
-    }
-  }
+  const uidNext = selectedUidNext(client);
 
   let searchFrom: number;
   if (options.deep) {
@@ -229,7 +301,6 @@ async function fetchAndStoreNewMessages(
     searchFrom = Math.max(1, uidNext - INITIAL_BACKFILL_COUNT);
   }
 
-  // Empty range → ImapFlow throws "Command failed"
   if (searchFrom >= uidNext) {
     await prisma.emailAccount.update({
       where: { id: config.accountId },
@@ -241,38 +312,51 @@ async function fetchAndStoreNewMessages(
     return 0;
   }
 
-  try {
-    for await (const msg of client.fetch(`${searchFrom}:${uidNext - 1}`, {
-      uid: true,
-      source: true,
-    })) {
-      if (!msg.uid || !msg.source) continue;
-      lastUid = Math.max(lastUid, msg.uid);
+  const uids = await listUidsInRange(client, searchFrom, uidNext);
 
-      try {
-        const parsed = (await simpleParser(msg.source)) as ParsedMail;
-        const stored = await storeInboundFromParsed(config, msg.uid, parsed);
-        if (stored) newCount += 1;
-      } catch (e) {
-        const msgText = e instanceof Error ? e.message : String(e);
-        // Never let one bad MIME message kill the whole mailbox sync
-        console.warn(
-          `Inbox parse/store failed for ${config.fromEmail} uid=${msg.uid}:`,
-          msgText.slice(0, 200),
-        );
+  if (uids.length === 0) {
+    // Nothing in range — advance cursor so we don't keep re-scanning empties
+    lastUid = Math.max(lastUid, uidNext - 1);
+    await prisma.emailAccount.update({
+      where: { id: config.accountId },
+      data: {
+        lastInboxPollUid: lastUid,
+        lastInboxSyncAt: new Date(),
+        inboxSyncError: null,
+      },
+    });
+    return 0;
+  }
+
+  for (let i = 0; i < uids.length; i += FETCH_CHUNK_SIZE) {
+    const chunk = uids.slice(i, i + FETCH_CHUNK_SIZE);
+    try {
+      for await (const msg of client.fetch(chunk, {
+        uid: true,
+        source: true,
+      })) {
+        if (!msg.uid || !msg.source) continue;
+        lastUid = Math.max(lastUid, msg.uid);
+
+        try {
+          const parsed = (await simpleParser(msg.source)) as ParsedMail;
+          const stored = await storeInboundFromParsed(config, msg.uid, parsed);
+          if (stored) newCount += 1;
+        } catch (e) {
+          console.warn(
+            `Inbox parse/store failed for ${config.fromEmail} uid=${msg.uid}:`,
+            imapErrorMessage(e).slice(0, 200),
+          );
+        }
       }
-    }
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    // Common when UIDs were expunged mid-fetch — advance cursor and continue
-    if (/command failed/i.test(msg) || /uid/i.test(msg)) {
+    } catch (e) {
+      const msg = imapErrorMessage(e);
       console.warn(
-        `Inbox fetch range failed for ${config.fromEmail} (${searchFrom}:${uidNext - 1}):`,
+        `Inbox fetch chunk failed for ${config.fromEmail} (${chunk[0]}-${chunk[chunk.length - 1]}):`,
         msg.slice(0, 200),
       );
-      lastUid = Math.max(lastUid, uidNext - 1);
-    } else {
-      throw e;
+      // Keep going with remaining chunks; don't wipe the whole sync
+      lastUid = Math.max(lastUid, chunk[chunk.length - 1] ?? lastUid);
     }
   }
 
@@ -330,12 +414,17 @@ export async function syncInboxMailbox(
       connectionTimeout: 20000,
       greetingTimeout: 15000,
     });
+    attachImapErrorGuard(client, config.fromEmail);
 
     await client.connect();
     const lock = await client.getMailboxLock("INBOX");
 
     try {
-      return await fetchAndStoreNewMessages(client, config, options);
+      return await fetchAndStoreNewMessages(
+        client as unknown as ImapClient,
+        config,
+        options,
+      );
     } finally {
       lock.release();
       await client.logout().catch(() => undefined);
@@ -360,8 +449,11 @@ export async function syncAllInboxesOnce(
         );
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.warn(`Inbox sync skipped for ${config.fromEmail}:`, msg);
+      const msg = imapErrorMessage(e);
+      console.warn(
+        `Inbox sync skipped for ${config.fromEmail} (imap ${config.host}):`,
+        msg,
+      );
       await prisma.emailAccount
         .update({
           where: { id: config.accountId },
@@ -398,13 +490,17 @@ export async function startInboxIdleWatcher(
           connectionTimeout: 20000,
           greetingTimeout: 15000,
         });
+        attachImapErrorGuard(client, `idle:${config.fromEmail}`);
 
         await client.connect();
         const lock = await client.getMailboxLock("INBOX");
 
         try {
           const initial = await withMailboxLock(config.accountId, () =>
-            fetchAndStoreNewMessages(client, config),
+            fetchAndStoreNewMessages(
+              client as unknown as ImapClient,
+              config,
+            ),
           );
           if (initial > 0) {
             console.log(
@@ -413,9 +509,21 @@ export async function startInboxIdleWatcher(
           }
 
           while (idleLoops.get(config.accountId)) {
-            await client.idle();
+            try {
+              await client.idle();
+            } catch (idleErr) {
+              // IDLE unsupported / timed out — fall through to a poll, then reconnect
+              console.warn(
+                `Inbox IDLE ended for ${config.fromEmail}:`,
+                imapErrorMessage(idleErr).slice(0, 200),
+              );
+              break;
+            }
             const n = await withMailboxLock(config.accountId, () =>
-              fetchAndStoreNewMessages(client, config),
+              fetchAndStoreNewMessages(
+                client as unknown as ImapClient,
+                config,
+              ),
             );
             if (n > 0) {
               console.log(
@@ -429,14 +537,23 @@ export async function startInboxIdleWatcher(
 
         await client.logout().catch(() => undefined);
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.warn(`Inbox IDLE reconnect for ${config.fromEmail}:`, msg);
-        await prisma.emailAccount
-          .update({
-            where: { id: config.accountId },
-            data: { inboxSyncError: msg.slice(0, 500) },
-          })
-          .catch(() => undefined);
+        const msg = imapErrorMessage(e);
+        console.warn(
+          `Inbox IDLE reconnect for ${config.fromEmail} (imap ${config.host}):`,
+          msg,
+        );
+        // Don't overwrite a clear success state with transient socket noise
+        const transient = /etimedout|econnreset|socket|closed|timeout/i.test(
+          msg,
+        );
+        if (!transient) {
+          await prisma.emailAccount
+            .update({
+              where: { id: config.accountId },
+              data: { inboxSyncError: msg.slice(0, 500) },
+            })
+            .catch(() => undefined);
+        }
         await new Promise((r) => setTimeout(r, 30_000));
       }
     }

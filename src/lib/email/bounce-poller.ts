@@ -11,6 +11,23 @@ import {
 /** Last seen IMAP UID per mailbox for bounce-only polling (in-memory). */
 const lastBounceUidByAccount = new Map<string, number>();
 
+function imapErrorMessage(e: unknown): string {
+  if (!e || typeof e !== "object") return String(e);
+  const err = e as {
+    message?: string;
+    responseText?: string;
+    response?: string;
+    code?: string;
+  };
+  const parts = [
+    err.message,
+    err.responseText,
+    typeof err.response === "string" ? err.response : null,
+    err.code,
+  ].filter(Boolean);
+  return [...new Set(parts)].join(" — ").slice(0, 500) || "Unknown IMAP error";
+}
+
 async function pollBouncesOnMailbox(config: MailboxImapConfig): Promise<number> {
   const { ImapFlow } = await import("imapflow");
   const { simpleParser } = await import("mailparser");
@@ -25,20 +42,47 @@ async function pollBouncesOnMailbox(config: MailboxImapConfig): Promise<number> 
     auth: { user: config.user, pass: config.pass },
     logger: false,
     connectionTimeout: 15000,
+    greetingTimeout: 15000,
+  });
+
+  client.on("error", (err: Error) => {
+    console.warn(
+      `Bounce IMAP socket (${config.fromEmail}):`,
+      imapErrorMessage(err),
+    );
   });
 
   await client.connect();
   const lock = await client.getMailboxLock("INBOX");
 
   try {
-    const status = await client.status("INBOX", { uidNext: true });
-    const uidNext = status.uidNext || 1;
-    const searchFrom = lastPollUid > 0 ? lastPollUid + 1 : 1;
+    // Use selected mailbox metadata — never STATUS while INBOX is open
+    // (causes "Command failed" on many cPanel/Dovecot hosts).
+    const uidNext =
+      client.mailbox && typeof client.mailbox === "object"
+        ? client.mailbox.uidNext || 1
+        : 1;
+    const searchFrom = lastPollUid > 0 ? lastPollUid + 1 : Math.max(1, uidNext - 100);
     if (searchFrom >= uidNext) {
       lastBounceUidByAccount.set(config.accountId, lastPollUid);
       return 0;
     }
-    for await (const msg of client.fetch(`${searchFrom}:*`, {
+
+    let uids: number[] = [];
+    try {
+      const found = await client.search(
+        { uid: `${searchFrom}:${uidNext - 1}` },
+        { uid: true },
+      );
+      if (Array.isArray(found)) uids = found;
+    } catch {
+      // Fall through to open-ended fetch
+    }
+
+    const range: string | number[] =
+      uids.length > 0 ? uids : `${searchFrom}:*`;
+
+    for await (const msg of client.fetch(range, {
       uid: true,
       source: true,
     })) {
@@ -66,7 +110,7 @@ async function pollBouncesOnMailbox(config: MailboxImapConfig): Promise<number> 
     lock.release();
   }
 
-  await client.logout();
+  await client.logout().catch(() => undefined);
   lastBounceUidByAccount.set(config.accountId, lastPollUid);
   return processed;
 }
@@ -86,8 +130,8 @@ export async function pollBounceMailboxOnce(): Promise<number> {
       total += n;
     } catch (e) {
       console.warn(
-        `Bounce IMAP poll skipped for ${config.user}:`,
-        e instanceof Error ? e.message : e,
+        `Bounce IMAP poll skipped for ${config.user} (imap ${config.host}):`,
+        imapErrorMessage(e),
       );
     }
   }
