@@ -16,6 +16,8 @@ fi
 
 # Run database migrations and seeding
 echo "[1/4] Running Prisma database setup..."
+# Backfill nullable ownerId onto existing rows BEFORE db push requires NOT NULL
+npx tsx scripts/migrate-owner-id.ts
 # --accept-data-loss: drops legacy WhatsApp tables removed from schema (email-only app)
 npx prisma db push --accept-data-loss
 npx tsx scripts/ensure-schema.ts
