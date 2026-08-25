@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 
 export type MailboxImapConfig = {
   accountId: string;
+  ownerId?: string;
   fromEmail: string;
   fromName: string | null;
   host: string;
@@ -90,6 +91,7 @@ export async function resolveMailboxImapConfigs(options?: {
       if (!host || !user || !pass) return null;
       return {
         accountId: acc.id,
+        ownerId: acc.ownerId,
         fromEmail: acc.fromEmail,
         fromName: acc.fromName,
         host,
@@ -100,7 +102,7 @@ export async function resolveMailboxImapConfigs(options?: {
         isActive: acc.isActive,
       };
     })
-    .filter((c): c is MailboxImapConfig => c !== null);
+    .filter((c): c is NonNullable<typeof c> => c !== null);
 }
 
 export function isBounceNotification(subject: string, body: string): boolean {

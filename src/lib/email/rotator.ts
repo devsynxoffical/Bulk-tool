@@ -134,6 +134,8 @@ function rankInboxes(inboxes: InboxWithDomain[]): InboxWithDomain[] {
 export type GetNextSendingInboxOptions = {
   /** When false, manual one-off sends can go immediately (campaigns keep default true). */
   respectCooldown?: boolean;
+  /** Required for tenant isolation — only this user's mailboxes. */
+  ownerId?: string;
 };
 
 function describeInboxBlockers(
@@ -171,11 +173,14 @@ function describeInboxBlockers(
 export async function getNextSendingInbox(
   options: GetNextSendingInboxOptions = {},
 ): Promise<EmailAccountRecord> {
-  const { respectCooldown = true } = options;
+  const { respectCooldown = true, ownerId } = options;
   await checkDailyReset();
 
   const inboxes = await prisma.emailAccount.findMany({
-    where: { isActive: true },
+    where: {
+      isActive: true,
+      ...(ownerId ? { ownerId } : {}),
+    },
     include: {
       domain: {
         select: {
@@ -205,11 +210,16 @@ export async function getNextSendingInbox(
 }
 
 /** Milliseconds until any inbox becomes ready (for job retry delay). */
-export async function getMsUntilInboxAvailable(): Promise<number> {
+export async function getMsUntilInboxAvailable(
+  ownerId?: string,
+): Promise<number> {
   await checkDailyReset();
 
   const inboxes = await prisma.emailAccount.findMany({
-    where: { isActive: true },
+    where: {
+      isActive: true,
+      ...(ownerId ? { ownerId } : {}),
+    },
     include: {
       domain: {
         select: {
@@ -284,15 +294,20 @@ export async function recordInboxSend(
   }
 }
 
-export async function getSendingCapacityStats() {
+export async function getSendingCapacityStats(ownerId?: string) {
   await checkDailyReset();
+
+  const ownerFilter = ownerId ? { ownerId } : {};
 
   const [inboxes, domains] = await Promise.all([
     prisma.emailAccount.findMany({
-      where: { isActive: true },
+      where: { isActive: true, ...ownerFilter },
       include: { domain: true },
     }),
-    prisma.sendingDomain.findMany({ orderBy: { domainName: "asc" } }),
+    prisma.sendingDomain.findMany({
+      where: ownerFilter,
+      orderBy: { domainName: "asc" },
+    }),
   ]);
 
   let inboxCapacityToday = 0;

@@ -1,17 +1,26 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/api";
+import { assertOwns, forbidden, requireSession } from "@/lib/api";
 
 export async function PATCH(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const { error } = await requireSession();
-  if (error) return error;
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
 
   const { id } = await params;
 
   try {
+    const inbound = await prisma.inboundEmail.findUnique({
+      where: { id },
+      include: { inbox: { select: { ownerId: true } } },
+    });
+    if (!inbound) {
+      return NextResponse.json({ error: "Message not found" }, { status: 404 });
+    }
+    if (!assertOwns(inbound.inbox.ownerId, session)) return forbidden();
+
     await prisma.inboundEmail.update({
       where: { id },
       data: { isRead: true },

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireSession } from "@/lib/api";
+import { prisma } from "@/lib/prisma";
+import { assertOwns, forbidden, requireSession } from "@/lib/api";
 import { sendSingleEmail } from "@/lib/messages/send-single";
 
 const schema = z.object({
@@ -11,8 +12,8 @@ const schema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const { error } = await requireSession();
-  if (error) return error;
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
 
   let body: unknown;
   try {
@@ -32,6 +33,26 @@ export async function POST(req: NextRequest) {
 
   try {
     const data = parsed.data;
+    const contact = await prisma.contact.findUnique({
+      where: { id: data.contactId },
+      select: { ownerId: true },
+    });
+    if (!contact) {
+      return NextResponse.json({ error: "Client not found" }, { status: 404 });
+    }
+    if (!assertOwns(contact.ownerId, session)) return forbidden();
+
+    if (data.templateId) {
+      const template = await prisma.template.findUnique({
+        where: { id: data.templateId },
+        select: { ownerId: true },
+      });
+      if (!template) {
+        return NextResponse.json({ error: "Email template not found" }, { status: 404 });
+      }
+      if (!assertOwns(template.ownerId, session)) return forbidden();
+    }
+
     const result = await sendSingleEmail({
       contactId: data.contactId,
       subject: data.subject,

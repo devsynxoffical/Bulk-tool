@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/api";
+import { assertOwns, forbidden, requireSession } from "@/lib/api";
 import { sendEmailMessage } from "@/lib/email/client";
 
 const bodySchema = z.object({
@@ -30,8 +30,8 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const { error } = await requireSession();
-  if (error) return error;
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
 
   const { id } = await params;
 
@@ -53,6 +53,7 @@ export async function POST(
     if (!inbound) {
       return NextResponse.json({ error: "Message not found" }, { status: 404 });
     }
+    if (!assertOwns(inbound.inbox.ownerId, session)) return forbidden();
 
     const account = inbound.inbox;
     if (!account.host || !account.username || !account.password) {
@@ -107,10 +108,14 @@ export async function POST(
       references: inReplyTo,
     });
 
+    const ownerId = account.ownerId;
     let contactId = inbound.contactId;
     if (!contactId) {
       const existing = await prisma.contact.findFirst({
-        where: { email: { equals: inbound.fromEmail, mode: "insensitive" } },
+        where: {
+          ownerId,
+          email: { equals: inbound.fromEmail, mode: "insensitive" },
+        },
         select: { id: true },
       });
       if (existing) {
@@ -118,6 +123,7 @@ export async function POST(
       } else {
         const created = await prisma.contact.create({
           data: {
+            ownerId,
             email: inbound.fromEmail.toLowerCase(),
             name: inbound.fromName || inbound.fromEmail.split("@")[0],
           },

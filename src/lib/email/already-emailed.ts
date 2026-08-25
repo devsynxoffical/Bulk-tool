@@ -6,12 +6,15 @@ const SENT_STATUSES = ["SENT", "DELIVERED", "READ"] as const;
  * Contact IDs that already received at least one outbound email
  * (campaign recipient or message). Used to avoid re-emailing.
  */
-export async function getAlreadyEmailedContactIds(): Promise<Set<string>> {
+export async function getAlreadyEmailedContactIds(
+  ownerId?: string,
+): Promise<Set<string>> {
+  const ownerFilter = ownerId ? { ownerId } : {};
   const [fromRecipients, fromMessages] = await Promise.all([
     prisma.campaignRecipient.findMany({
       where: {
         status: { in: [...SENT_STATUSES] },
-        campaign: { channel: "EMAIL" },
+        campaign: { channel: "EMAIL", ...ownerFilter },
       },
       select: { contactId: true },
       distinct: ["contactId"],
@@ -21,6 +24,7 @@ export async function getAlreadyEmailedContactIds(): Promise<Set<string>> {
         channel: "EMAIL",
         direction: "OUTBOUND",
         status: { in: [...SENT_STATUSES] },
+        ...(ownerId ? { contact: { ownerId } } : {}),
       },
       select: { contactId: true },
       distinct: ["contactId"],

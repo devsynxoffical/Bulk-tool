@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireSession } from "@/lib/api";
+import { ownerScope, requireSession } from "@/lib/api";
 import { checkScraperHealth, startScrape } from "@/lib/scraper";
 
 const schema = z.object({
@@ -10,8 +10,11 @@ const schema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const { error } = await requireSession();
-  if (error) return error;
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
+
+  const filterUserId = req.nextUrl.searchParams.get("userId");
+  const scope = ownerScope(session, filterUserId);
 
   const parsed = schema.safeParse(await req.json());
   if (!parsed.success) {
@@ -33,7 +36,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const exclusions = await fetchScrapeExclusionsFromDb();
+    const exclusions = await fetchScrapeExclusionsFromDb(scope.ownerId);
     const { jobId } = await startScrape({
       ...parsed.data,
       skipEmails: exclusions.emails,
@@ -48,8 +51,9 @@ export async function POST(req: NextRequest) {
   }
 }
 
-async function fetchScrapeExclusionsFromDb() {
+async function fetchScrapeExclusionsFromDb(ownerId?: string) {
   const { prisma } = await import("@/lib/prisma");
+  const ownerFilter = ownerId ? { ownerId } : {};
 
   function domainFromUrl(raw: string | null | undefined): string {
     if (!raw) return "";
@@ -63,16 +67,23 @@ async function fetchScrapeExclusionsFromDb() {
 
   const [contacts, leads, suppressed] = await Promise.all([
     prisma.contact.findMany({
-      where: { email: { not: null } },
+      where: { email: { not: null }, ...ownerFilter },
       select: { email: true, customFields: true },
       take: 50_000,
     }),
     prisma.lead.findMany({
-      where: { OR: [{ email: { not: null } }, { website: { not: null } }] },
+      where: {
+        ...ownerFilter,
+        OR: [{ email: { not: null } }, { website: { not: null } }],
+      },
       select: { email: true, website: true },
       take: 50_000,
     }),
-    prisma.suppressionList.findMany({ select: { email: true }, take: 20_000 }),
+    prisma.suppressionList.findMany({
+      where: { ...ownerFilter },
+      select: { email: true },
+      take: 20_000,
+    }),
   ]);
 
   const emails = new Set<string>();

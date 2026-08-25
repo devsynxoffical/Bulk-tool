@@ -2,9 +2,12 @@ import { promises as fs } from "fs";
 import path from "path";
 import { prisma } from "@/lib/prisma";
 
-export async function getActiveEmailAccount() {
+export async function getActiveEmailAccount(ownerId?: string) {
   return prisma.emailAccount.findFirst({
-    where: { isActive: true },
+    where: {
+      isActive: true,
+      ...(ownerId ? { ownerId } : {}),
+    },
     orderBy: { updatedAt: "desc" },
   });
 }
@@ -35,13 +38,20 @@ export async function sendEmailMessage(params: {
 }) {
   const recipient = params.to.trim().toLowerCase();
 
-  // 1. Suppression check
+  // 1. Suppression check (per mailbox owner)
   if (!params.skipSuppression) {
-    const suppressed = await prisma.suppressionList.findUnique({
-      where: { email: recipient },
-    });
-    if (suppressed) {
-      throw new Error(`Email ${recipient} is on the Suppression List (${suppressed.reason}). Send aborted.`);
+    const ownerId =
+      (params.account as { ownerId?: string } | null | undefined)?.ownerId ||
+      undefined;
+    if (ownerId) {
+      const suppressed = await prisma.suppressionList.findUnique({
+        where: { ownerId_email: { ownerId, email: recipient } },
+      });
+      if (suppressed) {
+        throw new Error(
+          `Email ${recipient} is on the Suppression List (${suppressed.reason}). Send aborted.`,
+        );
+      }
     }
   }
 

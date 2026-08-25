@@ -1,5 +1,5 @@
-import { NextResponse } from "next/server";
-import { requireSession } from "@/lib/api";
+import { NextRequest, NextResponse } from "next/server";
+import { requireSession, ownerScope } from "@/lib/api";
 import { getSendingCapacityStats } from "@/lib/email/rotator";
 import { getBounceStats } from "@/lib/email/bounce-handler";
 import { checkSmtpRelayHealth, isSmtpRelayEnabled } from "@/lib/email/smtp-relay-client";
@@ -10,13 +10,18 @@ import {
   WORKER_CONCURRENCY,
 } from "@/lib/email/constants";
 
-export async function GET() {
-  const { error } = await requireSession();
-  if (error) return error;
+export async function GET(req: NextRequest) {
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
+
+  const filterUserId = req.nextUrl.searchParams.get("userId");
+  const scope = ownerScope(session, filterUserId);
+  // Agents: own stats. Admin with ?userId=: that user. Admin without: all (undefined).
+  const ownerId = scope.ownerId;
 
   const [stats, bounces, relay] = await Promise.all([
-    getSendingCapacityStats(),
-    getBounceStats(1),
+    getSendingCapacityStats(ownerId),
+    getBounceStats(1, ownerId),
     isSmtpRelayEnabled() ? checkSmtpRelayHealth() : Promise.resolve(null),
   ]);
 

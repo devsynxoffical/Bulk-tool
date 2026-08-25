@@ -4,7 +4,7 @@ import net from "net";
 import tls from "tls";
 import nodemailer from "nodemailer";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/api";
+import { ownerScope, requireSession } from "@/lib/api";
 import { checkSmtpRelayHealth, isSmtpRelayEnabled } from "@/lib/email/smtp-relay-client";
 
 type PortCheckResult = {
@@ -124,13 +124,16 @@ async function testSmtpAuth(
 }
 
 export async function POST(req: NextRequest) {
-  const { error } = await requireSession();
-  if (error) return error;
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
+
+  const filterUserId = req.nextUrl.searchParams.get("userId");
+  const scope = ownerScope(session, filterUserId);
 
   try {
     const body = await req.json().catch(() => ({}));
     const account = await prisma.emailAccount.findFirst({
-      where: { isActive: true },
+      where: { isActive: true, ...scope },
       orderBy: { updatedAt: "desc" },
     });
 

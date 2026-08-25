@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/api";
+import {
+  assertOwns,
+  forbidden,
+  ownerScope,
+  requireSession,
+  resolveOwnerId,
+} from "@/lib/api";
 import { sendEmailMessage } from "@/lib/email/client";
 
 const schema = z.object({
@@ -17,8 +23,12 @@ const schema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const { error } = await requireSession();
-  if (error) return error;
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
+
+  const filterUserId = req.nextUrl.searchParams.get("userId");
+  const scope = ownerScope(session, filterUserId);
+  const ownerId = resolveOwnerId(session, filterUserId);
 
   try {
     const body = await req.json().catch(() => ({}));
@@ -36,9 +46,11 @@ export async function POST(req: NextRequest) {
       account = await prisma.emailAccount.findUnique({
         where: { id: parsed.data.accountId },
       });
+      if (account && !assertOwns(account.ownerId, session)) return forbidden();
     } else if (parsed.data.host && parsed.data.username && parsed.data.password) {
       account = {
         id: "draft-test",
+        ownerId,
         provider: "SMTP",
         host: parsed.data.host,
         port: parsed.data.port || 587,
@@ -53,7 +65,7 @@ export async function POST(req: NextRequest) {
       };
     } else {
       account = await prisma.emailAccount.findFirst({
-        where: { isActive: true },
+        where: { isActive: true, ...scope },
         orderBy: { updatedAt: "desc" },
       });
     }

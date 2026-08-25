@@ -1,18 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/api";
+import { ownerScope, requireSession } from "@/lib/api";
 import { syncAllInboxesOnce } from "@/lib/email/inbox-poller";
 
 export async function GET(req: NextRequest) {
-  const { error } = await requireSession();
-  if (error) return error;
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
 
+  const filterUserId = req.nextUrl.searchParams.get("userId");
+  const scope = ownerScope(session, filterUserId);
   const inboxId = req.nextUrl.searchParams.get("inboxId")?.trim() || "";
   const unreadOnly = req.nextUrl.searchParams.get("unreadOnly") === "true";
 
   try {
     // Show ALL mailboxes (active + paused) so users can filter any inbox
     const mailboxes = await prisma.emailAccount.findMany({
+      where: { ...scope },
       select: {
         id: true,
         fromEmail: true,
@@ -28,7 +31,7 @@ export async function GET(req: NextRequest) {
 
     const unreadCounts = await prisma.inboundEmail.groupBy({
       by: ["inboxId"],
-      where: { isRead: false, isBounce: false },
+      where: { isRead: false, isBounce: false, inbox: { ...scope } },
       _count: { _all: true },
     });
     const unreadByInbox = new Map(
@@ -39,7 +42,8 @@ export async function GET(req: NextRequest) {
       isBounce: boolean;
       inboxId?: string;
       isRead?: boolean;
-    } = { isBounce: false };
+      inbox: { ownerId?: string };
+    } = { isBounce: false, inbox: { ...scope } };
 
     if (inboxId) where.inboxId = inboxId;
     if (unreadOnly) where.isRead = false;
@@ -67,7 +71,7 @@ export async function GET(req: NextRequest) {
     });
 
     const totalUnread = await prisma.inboundEmail.count({
-      where: { isRead: false, isBounce: false },
+      where: { isRead: false, isBounce: false, inbox: { ...scope } },
     });
 
     return NextResponse.json({

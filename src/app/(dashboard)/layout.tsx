@@ -21,6 +21,7 @@ export default async function DashboardLayout({
           <TopHeader
             userName={session.user.name}
             userEmail={session.user.email}
+            userRole={session.user.role}
           />
           <ChatAwareMain>{children}</ChatAwareMain>
         </div>

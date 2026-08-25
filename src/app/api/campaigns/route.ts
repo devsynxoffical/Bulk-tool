@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/api";
+import {
+  assertOwns,
+  forbidden,
+  ownerScope,
+  requireSession,
+  resolveOwnerId,
+} from "@/lib/api";
 import { getAlreadyEmailedContactIds } from "@/lib/email/already-emailed";
 
 const createSchema = z.object({
@@ -18,11 +24,15 @@ const createSchema = z.object({
   scheduledAt: z.string().datetime().optional(),
 });
 
-export async function GET() {
-  const { error } = await requireSession();
-  if (error) return error;
+export async function GET(req: NextRequest) {
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
+
+  const filterUserId = req.nextUrl.searchParams.get("userId");
+  const scope = ownerScope(session, filterUserId);
 
   const campaigns = await prisma.campaign.findMany({
+    where: { ...scope },
     orderBy: { createdAt: "desc" },
     include: { template: true },
   });
@@ -30,8 +40,11 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const { error } = await requireSession();
-  if (error) return error;
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
+
+  const filterUserId = req.nextUrl.searchParams.get("userId");
+  const ownerId = resolveOwnerId(session, filterUserId);
 
   const body = await req.json();
   const parsed = createSchema.safeParse(body);
@@ -45,6 +58,7 @@ export async function POST(req: NextRequest) {
   if (!template) {
     return NextResponse.json({ error: "Template not found" }, { status: 404 });
   }
+  if (!assertOwns(template.ownerId, session)) return forbidden();
 
   // If user provided customized subject or body, update template content
   if (parsed.data.customSubject || parsed.data.customBody) {
@@ -59,6 +73,7 @@ export async function POST(req: NextRequest) {
 
   let contacts = await prisma.contact.findMany({
     where: {
+      ownerId,
       emailOptedOut: false,
       email: { not: null },
       ...(parsed.data.tag ? { tags: { has: parsed.data.tag } } : {}),
@@ -67,7 +82,7 @@ export async function POST(req: NextRequest) {
 
   let skippedAlreadyEmailed = 0;
   if (parsed.data.excludeAlreadyEmailed) {
-    const alreadyEmailed = await getAlreadyEmailedContactIds();
+    const alreadyEmailed = await getAlreadyEmailedContactIds(ownerId);
     const before = contacts.length;
     contacts = contacts.filter((c) => !alreadyEmailed.has(c.id));
     skippedAlreadyEmailed = before - contacts.length;
@@ -93,6 +108,7 @@ export async function POST(req: NextRequest) {
 
   const campaign = await prisma.campaign.create({
     data: {
+      ownerId,
       name: parsed.data.name,
       channel: "EMAIL",
       templateId: template.id,

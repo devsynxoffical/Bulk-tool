@@ -20,6 +20,7 @@ const titles: Record<string, { title: string; crumb: string }> = {
   "/mailboxes": { title: "Sending Mailboxes", crumb: "Infrastructure" },
   "/domains": { title: "Sending Domains", crumb: "Infrastructure" },
   "/settings": { title: "Engine Settings", crumb: "Infrastructure" },
+  "/users": { title: "Users", crumb: "Admin" },
 };
 
 function resolveMeta(pathname: string) {
@@ -33,9 +34,11 @@ function resolveMeta(pathname: string) {
 export function TopHeader({
   userName,
   userEmail,
+  userRole,
 }: {
   userName?: string | null;
   userEmail?: string | null;
+  userRole?: string | null;
 }) {
   const pathname = usePathname();
   const meta = resolveMeta(pathname);
@@ -45,6 +48,7 @@ export function TopHeader({
     .join("")
     .slice(0, 2)
     .toUpperCase();
+  const roleLabel = userRole === "ADMIN" ? "Admin" : "Agent";
 
   return (
     <header className="sticky top-0 z-20 border-b border-zinc-200 bg-white/90 backdrop-blur">
@@ -76,9 +80,9 @@ export function TopHeader({
         <div className="flex items-center gap-3">
           <div className="hidden text-right sm:block">
             <p className="text-xs font-medium text-zinc-900">
-              {userName || "Admin"}
+              {roleLabel}
             </p>
-            <p className="text-[11px] text-zinc-400">{userEmail}</p>
+            <p className="text-[11px] text-zinc-400">{userEmail || userName}</p>
           </div>
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-900 text-[11px] font-medium text-white">
             {initials}

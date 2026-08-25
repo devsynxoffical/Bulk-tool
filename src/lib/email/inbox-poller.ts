@@ -135,7 +135,10 @@ async function storeInboundFromParsed(
   const references = normalizeReferences(parsed.references);
 
   const contact = await prisma.contact.findFirst({
-    where: { email: { equals: fromEmail, mode: "insensitive" } },
+    where: {
+      email: { equals: fromEmail, mode: "insensitive" },
+      ...(config.ownerId ? { ownerId: config.ownerId } : {}),
+    },
     select: { id: true },
   });
 

@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/api";
+import {
+  assertOwns,
+  forbidden,
+  ownerScope,
+  requireSession,
+  resolveOwnerId,
+} from "@/lib/api";
 import { normalizePhone } from "@/lib/utils";
 
 const createSchema = z
@@ -19,9 +25,11 @@ const createSchema = z
   });
 
 export async function GET(req: NextRequest) {
-  const { error } = await requireSession();
-  if (error) return error;
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
 
+  const filterUserId = req.nextUrl.searchParams.get("userId");
+  const scope = ownerScope(session, filterUserId);
   const q = req.nextUrl.searchParams.get("q")?.trim();
   const tag = req.nextUrl.searchParams.get("tag")?.trim();
   const limitRaw = Number(req.nextUrl.searchParams.get("limit") || 500);
@@ -31,6 +39,7 @@ export async function GET(req: NextRequest) {
 
   const contacts = await prisma.contact.findMany({
     where: {
+      ...scope,
       AND: [
         q
           ? {
@@ -52,8 +61,11 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const { error } = await requireSession();
-  if (error) return error;
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
+
+  const filterUserId = req.nextUrl.searchParams.get("userId");
+  const ownerId = resolveOwnerId(session, filterUserId);
 
   try {
     const body = await req.json();
@@ -80,9 +92,10 @@ export async function POST(req: NextRequest) {
     if (parsed.data.company?.trim()) customFields.company = parsed.data.company.trim();
     if (parsed.data.city?.trim()) customFields.city = parsed.data.city.trim();
 
-    // 1. Look up existing contact by email or phone
+    // 1. Look up existing contact by email or phone (same owner)
     const existing = await prisma.contact.findFirst({
       where: {
+        ownerId,
         OR: [
           ...(email ? [{ email: { equals: email, mode: "insensitive" as const } }] : []),
           ...(phone ? [{ phone }] : []),
@@ -106,6 +119,7 @@ export async function POST(req: NextRequest) {
       try {
         contact = await prisma.contact.create({
           data: {
+            ownerId,
             email: email || null,
             phone: phone || null,
             name: parsed.data.name?.trim() || null,
@@ -117,6 +131,7 @@ export async function POST(req: NextRequest) {
         // Fallback for race condition or unique constraint collision
         const fallback = await prisma.contact.findFirst({
           where: {
+            ownerId,
             OR: [
               ...(email ? [{ email }] : []),
               ...(phone ? [{ phone }] : []),
@@ -147,13 +162,19 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const { error } = await requireSession();
-  if (error) return error;
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
 
   const id = req.nextUrl.searchParams.get("id");
   if (!id) {
     return NextResponse.json({ error: "id required" }, { status: 400 });
   }
+
+  const existing = await prisma.contact.findUnique({ where: { id } });
+  if (!existing) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  if (!assertOwns(existing.ownerId, session)) return forbidden();
 
   await prisma.contact.delete({ where: { id } });
   return NextResponse.json({ success: true });

@@ -188,6 +188,103 @@ export async function ensureDbSchema() {
       CREATE INDEX IF NOT EXISTS "InboundEmail_fromEmail_idx" ON "InboundEmail"("fromEmail");
     `);
 
+    // --- Multi-user ownership (ownerId) ---
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "isActive" BOOLEAN NOT NULL DEFAULT true;
+    `);
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "User" ALTER COLUMN "role" SET DEFAULT 'AGENT';
+    `);
+
+    // Ensure at least one admin exists for backfill (seed may run later)
+    await prisma.$executeRawUnsafe(`
+      DO $$
+      DECLARE
+        admin_id TEXT;
+      BEGIN
+        SELECT id INTO admin_id FROM "User" WHERE role = 'ADMIN' ORDER BY "createdAt" ASC LIMIT 1;
+        IF admin_id IS NULL THEN
+          SELECT id INTO admin_id FROM "User" ORDER BY "createdAt" ASC LIMIT 1;
+        END IF;
+        IF admin_id IS NULL THEN
+          RETURN;
+        END IF;
+
+        ALTER TABLE "SendingDomain" ADD COLUMN IF NOT EXISTS "ownerId" TEXT;
+        ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "ownerId" TEXT;
+        ALTER TABLE "Contact" ADD COLUMN IF NOT EXISTS "ownerId" TEXT;
+        ALTER TABLE "Lead" ADD COLUMN IF NOT EXISTS "ownerId" TEXT;
+        ALTER TABLE "Template" ADD COLUMN IF NOT EXISTS "ownerId" TEXT;
+        ALTER TABLE "Campaign" ADD COLUMN IF NOT EXISTS "ownerId" TEXT;
+        ALTER TABLE "SuppressionList" ADD COLUMN IF NOT EXISTS "ownerId" TEXT;
+        ALTER TABLE "BounceEvent" ADD COLUMN IF NOT EXISTS "ownerId" TEXT;
+
+        UPDATE "SendingDomain" SET "ownerId" = admin_id WHERE "ownerId" IS NULL;
+        UPDATE "EmailAccount" SET "ownerId" = admin_id WHERE "ownerId" IS NULL;
+        UPDATE "Contact" SET "ownerId" = admin_id WHERE "ownerId" IS NULL;
+        UPDATE "Lead" SET "ownerId" = admin_id WHERE "ownerId" IS NULL;
+        UPDATE "Template" SET "ownerId" = admin_id WHERE "ownerId" IS NULL;
+        UPDATE "Campaign" SET "ownerId" = admin_id WHERE "ownerId" IS NULL;
+        UPDATE "SuppressionList" SET "ownerId" = admin_id WHERE "ownerId" IS NULL;
+        UPDATE "BounceEvent" SET "ownerId" = admin_id WHERE "ownerId" IS NULL AND "inboxId" IS NULL;
+
+        -- Bounce events: inherit owner from mailbox when possible
+        UPDATE "BounceEvent" b
+        SET "ownerId" = e."ownerId"
+        FROM "EmailAccount" e
+        WHERE b."inboxId" = e.id AND (b."ownerId" IS NULL OR b."ownerId" = '');
+      END $$;
+    `);
+
+    // Drop old global uniques that conflict with per-owner uniques (ignore if missing)
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "Contact" DROP CONSTRAINT IF EXISTS "Contact_email_key";
+    `);
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "Contact" DROP CONSTRAINT IF EXISTS "Contact_phone_key";
+    `);
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "Template" DROP CONSTRAINT IF EXISTS "Template_name_language_channel_key";
+    `);
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "SuppressionList" DROP CONSTRAINT IF EXISTS "SuppressionList_email_key";
+    `);
+
+    // Per-owner unique indexes
+    await prisma.$executeRawUnsafe(`
+      CREATE UNIQUE INDEX IF NOT EXISTS "Contact_ownerId_email_key" ON "Contact"("ownerId", "email");
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE UNIQUE INDEX IF NOT EXISTS "Contact_ownerId_phone_key" ON "Contact"("ownerId", "phone");
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE UNIQUE INDEX IF NOT EXISTS "Template_ownerId_name_language_channel_key"
+      ON "Template"("ownerId", "name", "language", "channel");
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE UNIQUE INDEX IF NOT EXISTS "SuppressionList_ownerId_email_key"
+      ON "SuppressionList"("ownerId", "email");
+    `);
+
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "EmailAccount_ownerId_idx" ON "EmailAccount"("ownerId");
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "SendingDomain_ownerId_idx" ON "SendingDomain"("ownerId");
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "Campaign_ownerId_idx" ON "Campaign"("ownerId");
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "Contact_ownerId_idx" ON "Contact"("ownerId");
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "Lead_ownerId_idx" ON "Lead"("ownerId");
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS "Template_ownerId_idx" ON "Template"("ownerId");
+    `);
+
     isEnsured = true;
   } catch (err) {
     console.error("Auto-schema sync warning:", err);

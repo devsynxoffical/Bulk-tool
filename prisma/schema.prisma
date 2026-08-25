@@ -60,13 +60,25 @@ model User {
   email        String   @unique
   name         String
   passwordHash String
-  role         Role     @default(ADMIN)
+  role         Role     @default(AGENT)
+  isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+
+  emailAccounts   EmailAccount[]
+  sendingDomains  SendingDomain[]
+  contacts        Contact[]
+  leads           Lead[]
+  templates       Template[]
+  campaigns       Campaign[]
+  suppressions    SuppressionList[]
+  bounceEvents    BounceEvent[]
 }
 
 model EmailAccount {
   id            String         @id @default(cuid())
+  ownerId       String
+  owner         User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   provider      String         @default("SMTP")
   apiKey        String?
   host          String?
@@ -95,8 +107,10 @@ model EmailAccount {
   updatedAt     DateTime       @updatedAt
   inboundEmails InboundEmail[]
 
+  @@index([ownerId])
   @@index([domainId])
   @@index([isActive, sentToday])
+  @@index([ownerId, isActive])
 }
 
 model InboundEmail {
@@ -129,6 +143,8 @@ model InboundEmail {
 
 model SendingDomain {
   id             String         @id @default(cuid())
+  ownerId        String
+  owner          User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   domainName     String         @unique
   dkimPrivateKey String?        @db.Text
   dkimPublicKey  String?        @db.Text
@@ -146,17 +162,26 @@ model SendingDomain {
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
   mailboxes      EmailAccount[]
+
+  @@index([ownerId])
 }
 
 model SuppressionList {
   id        String   @id @default(cuid())
-  email     String   @unique
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  email     String
   reason    String   @default("UNSUBSCRIBED") // UNSUBSCRIBED | BOUNCED | COMPLAINT
   createdAt DateTime @default(now())
+
+  @@unique([ownerId, email])
+  @@index([ownerId])
 }
 
 model BounceEvent {
   id        String   @id @default(cuid())
+  ownerId   String?
+  owner     User?    @relation(fields: [ownerId], references: [id], onDelete: SetNull)
   email     String
   inboxId   String?
   contactId String?
@@ -167,13 +192,16 @@ model BounceEvent {
   @@index([email])
   @@index([createdAt])
   @@index([inboxId])
+  @@index([ownerId])
 }
 
 model Contact {
   id            String               @id @default(cuid())
-  phone         String?              @unique
+  ownerId       String
+  owner         User                 @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  phone         String?
   name          String?
-  email         String?              @unique
+  email         String?
   tags          String[]             @default([])
   optedOut      Boolean              @default(false)
   emailOptedOut Boolean              @default(false)
@@ -185,10 +213,16 @@ model Contact {
   recipients    CampaignRecipient[]
   conversations Conversation[]
   inboundEmails InboundEmail[]
+
+  @@unique([ownerId, email])
+  @@unique([ownerId, phone])
+  @@index([ownerId])
 }
 
 model Lead {
   id        String   @id @default(cuid())
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   query     String
   name      String
   phone     String?
@@ -202,12 +236,15 @@ model Lead {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([ownerId])
   @@index([query])
   @@index([createdAt])
 }
 
 model Template {
   id             String     @id @default(cuid())
+  ownerId        String
+  owner          User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   channel        Channel    @default(EMAIL)
   metaTemplateId String?
   name           String
@@ -225,11 +262,14 @@ model Template {
   updatedAt      DateTime   @updatedAt
   campaigns      Campaign[]
 
-  @@unique([name, language, channel])
+  @@unique([ownerId, name, language, channel])
+  @@index([ownerId])
 }
 
 model Campaign {
   id                 String              @id @default(cuid())
+  ownerId            String
+  owner              User                @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   name               String
   channel            Channel             @default(WHATSAPP)
   status             CampaignStatus      @default(DRAFT)
@@ -250,6 +290,9 @@ model Campaign {
   updatedAt          DateTime            @updatedAt
   recipients         CampaignRecipient[]
   messages           Message[]
+
+  @@index([ownerId])
+  @@index([ownerId, status])
 }
 
 model CampaignRecipient {

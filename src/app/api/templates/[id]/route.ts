@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/api";
+import { assertOwns, forbidden, requireSession } from "@/lib/api";
 
 const schema = z
   .object({
@@ -23,8 +23,8 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const { error } = await requireSession();
-  if (error) return error;
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
 
   const { id } = await params;
   if (!id) {
@@ -38,6 +38,7 @@ export async function GET(
   if (!template) {
     return NextResponse.json({ error: "Template not found" }, { status: 404 });
   }
+  if (!assertOwns(template.ownerId, session)) return forbidden();
 
   return NextResponse.json(template);
 }
@@ -46,13 +47,19 @@ export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const { error } = await requireSession();
-  if (error) return error;
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
 
   const { id } = await params;
   if (!id) {
     return NextResponse.json({ error: "Template ID required" }, { status: 400 });
   }
+
+  const existing = await prisma.template.findUnique({ where: { id } });
+  if (!existing) {
+    return NextResponse.json({ error: "Template not found" }, { status: 404 });
+  }
+  if (!assertOwns(existing.ownerId, session)) return forbidden();
 
   const bodyData = await req.json().catch(() => ({}));
   const parsed = schema.safeParse(bodyData);
@@ -89,13 +96,19 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const { error } = await requireSession();
-  if (error) return error;
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
 
   const { id } = await params;
   if (!id) {
     return NextResponse.json({ error: "Template ID required" }, { status: 400 });
   }
+
+  const existing = await prisma.template.findUnique({ where: { id } });
+  if (!existing) {
+    return NextResponse.json({ error: "Template not found" }, { status: 404 });
+  }
+  if (!assertOwns(existing.ownerId, session)) return forbidden();
 
   try {
     await prisma.template.delete({

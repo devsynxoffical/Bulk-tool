@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import Papa from "papaparse";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/api";
+import { requireSession, resolveOwnerId } from "@/lib/api";
 import { normalizePhone } from "@/lib/utils";
 
 export async function POST(req: NextRequest) {
-  const { error } = await requireSession();
-  if (error) return error;
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
+
+  const filterUserId = req.nextUrl.searchParams.get("userId");
+  const ownerId = resolveOwnerId(session, filterUserId);
 
   const form = await req.formData();
   const file = form.get("file");
@@ -48,22 +51,22 @@ export async function POST(req: NextRequest) {
 
     if (phone && phone.length >= 8) {
       await prisma.contact.upsert({
-        where: { phone },
+        where: { ownerId_phone: { ownerId, phone } },
         update: {
           ...(name ? { name } : {}),
           ...(email ? { email } : {}),
           ...(tags.length ? { tags } : {}),
         },
-        create: { phone, name, email, tags },
+        create: { ownerId, phone, name, email, tags },
       });
     } else if (email) {
       await prisma.contact.upsert({
-        where: { email },
+        where: { ownerId_email: { ownerId, email } },
         update: {
           ...(name ? { name } : {}),
           ...(tags.length ? { tags } : {}),
         },
-        create: { email, name, tags },
+        create: { ownerId, email, name, tags },
       });
     }
     imported++;

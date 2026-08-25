@@ -81,14 +81,21 @@ async function main() {
 
   const user = await prisma.user.upsert({
     where: { email },
-    update: { name, passwordHash, role: "ADMIN" },
-    create: { email, name, passwordHash, role: "ADMIN" },
+    update: { name, passwordHash, role: "ADMIN", isActive: true },
+    create: {
+      email,
+      name,
+      passwordHash,
+      role: "ADMIN",
+      isActive: true,
+    },
   });
 
   for (const t of sampleTemplates) {
     await prisma.template.upsert({
       where: {
-        name_language_channel: {
+        ownerId_name_language_channel: {
+          ownerId: user.id,
           name: t.name,
           language: t.language,
           channel: t.channel,
@@ -101,7 +108,7 @@ async function main() {
         body: t.body,
         isSample: t.isSample,
       },
-      create: t,
+      create: { ...t, ownerId: user.id },
     });
   }
 
@@ -125,9 +132,11 @@ async function main() {
 
   for (const c of sampleContacts) {
     await prisma.contact.upsert({
-      where: { email: c.email },
+      where: {
+        ownerId_email: { ownerId: user.id, email: c.email },
+      },
       update: { name: c.name, tags: c.tags },
-      create: c,
+      create: { ...c, ownerId: user.id },
     });
   }
 

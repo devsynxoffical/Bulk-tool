@@ -101,9 +101,12 @@ export async function sendSingleEmail(params: {
     html = renderTemplateString(html, vars);
   }
 
-  const sendingInbox = await getNextSendingInbox({ respectCooldown: false });
+  const sendingInbox = await getNextSendingInbox({
+    respectCooldown: false,
+    ownerId: contact.ownerId,
+  });
   if (!sendingInbox) {
-    const waitMs = await getMsUntilInboxAvailable();
+    const waitMs = await getMsUntilInboxAvailable(contact.ownerId);
     if (waitMs > 0) {
       const waitMin = Math.max(1, Math.ceil(waitMs / 60_000));
       throw new Error(

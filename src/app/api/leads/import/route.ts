@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/api";
+import { requireSession, resolveOwnerId } from "@/lib/api";
 import { normalizePhone } from "@/lib/utils";
 import { scrapedLeadSchema } from "@/lib/scraper";
 import { isValidRecipientEmail } from "@/lib/email/bounce-handler";
@@ -12,8 +12,11 @@ const schema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const { error } = await requireSession();
-  if (error) return error;
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
+
+  const filterUserId = req.nextUrl.searchParams.get("userId");
+  const ownerId = resolveOwnerId(session, filterUserId);
 
   const parsed = schema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success || parsed.data.leads.length === 0) {
@@ -45,9 +48,9 @@ export async function POST(req: NextRequest) {
       // ── 1. Persist as Lead ──────────────────────────────────────────
       try {
         const existingLead = phone
-          ? await prisma.lead.findFirst({ where: { phone } })
+          ? await prisma.lead.findFirst({ where: { ownerId, phone } })
           : email
-            ? await prisma.lead.findFirst({ where: { email } })
+            ? await prisma.lead.findFirst({ where: { ownerId, email } })
             : null;
 
         if (existingLead) {
@@ -67,6 +70,7 @@ export async function POST(req: NextRequest) {
         } else {
           await prisma.lead.create({
             data: {
+              ownerId,
               query: tag,
               name: name ?? "Unknown Lead",
               phone,
@@ -89,10 +93,14 @@ export async function POST(req: NextRequest) {
 
       try {
         const existingByPhone = phone
-          ? await prisma.contact.findUnique({ where: { phone } })
+          ? await prisma.contact.findUnique({
+              where: { ownerId_phone: { ownerId, phone } },
+            })
           : null;
         const existingByEmail = email
-          ? await prisma.contact.findUnique({ where: { email } })
+          ? await prisma.contact.findUnique({
+              where: { ownerId_email: { ownerId, email } },
+            })
           : null;
 
         const targetContact = existingByPhone || existingByEmail;
@@ -129,6 +137,7 @@ export async function POST(req: NextRequest) {
         } else {
           await prisma.contact.create({
             data: {
+              ownerId,
               name: name || undefined,
               phone: phone || undefined,
               email: email || undefined,

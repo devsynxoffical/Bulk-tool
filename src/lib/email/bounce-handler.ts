@@ -36,6 +36,7 @@ export async function recordBounce(params: {
   inboxId?: string | null;
   raw?: string;
   contactId?: string;
+  ownerId?: string | null;
 }) {
   const email = params.email.trim().toLowerCase();
   if (!isValidRecipientEmail(email)) return { ok: false, error: "Invalid email" };
@@ -44,19 +45,35 @@ export async function recordBounce(params: {
   const suppressionReason =
     reason === "COMPLAINT" ? "COMPLAINT" : "BOUNCED";
 
-  await prisma.suppressionList.upsert({
-    where: { email },
-    create: { email, reason: suppressionReason },
-    update: { reason: suppressionReason },
-  });
+  let ownerId = params.ownerId ?? null;
+  if (!ownerId && params.inboxId) {
+    const inbox = await prisma.emailAccount.findUnique({
+      where: { id: params.inboxId },
+      select: { ownerId: true },
+    });
+    ownerId = inbox?.ownerId ?? null;
+  }
+
+  if (ownerId) {
+    await prisma.suppressionList.upsert({
+      where: { ownerId_email: { ownerId, email } },
+      create: { ownerId, email, reason: suppressionReason },
+      update: { reason: suppressionReason },
+    });
+  }
+
+  const contactWhere = {
+    email: { equals: email, mode: "insensitive" as const },
+    ...(ownerId ? { ownerId } : {}),
+  };
 
   const contact = await prisma.contact.findFirst({
-    where: { email: { equals: email, mode: "insensitive" } },
-    select: { id: true },
+    where: contactWhere,
+    select: { id: true, ownerId: true },
   });
 
   await prisma.contact.updateMany({
-    where: { email: { equals: email, mode: "insensitive" } },
+    where: contactWhere,
     data: { emailOptedOut: true },
   });
 
@@ -85,11 +102,13 @@ export async function recordBounce(params: {
         errorMessage: params.raw?.slice(0, 500) || bounceNote,
       },
     });
+    if (!ownerId) ownerId = contact.ownerId;
   }
 
   await prisma.bounceEvent.create({
     data: {
       email,
+      ownerId: ownerId ?? undefined,
       inboxId: params.inboxId ?? undefined,
       reason,
       raw: params.raw?.slice(0, 4000),
@@ -102,7 +121,6 @@ export async function recordBounce(params: {
       where: { id: params.inboxId },
       data: { bounceCount: { increment: 1 } },
     });
-    // Health is driven by open rate (+ bounce drag), not stacked −15 forever
     await recalculateInboxHealth(params.inboxId);
   }
 
@@ -118,33 +136,41 @@ export function parseBouncedRecipientFromBody(body: string): string | null {
   const finalRecipient = body.match(
     /final-recipient:\s*rfc822;\s*([\w.+-]+@[\w.-]+\.\w+)/i,
   );
-  if (finalRecipient) {
-    const addr = finalRecipient[1].toLowerCase();
-    if (isValidRecipientEmail(addr)) return addr;
+  if (finalRecipient?.[1] && isValidRecipientEmail(finalRecipient[1])) {
+    return finalRecipient[1].toLowerCase();
   }
 
-  const original = body.match(
+  const originalRecipient = body.match(
     /original-recipient:\s*rfc822;\s*([\w.+-]+@[\w.-]+\.\w+)/i,
   );
-  if (original) {
-    const addr = original[1].toLowerCase();
-    if (isValidRecipientEmail(addr)) return addr;
+  if (originalRecipient?.[1] && isValidRecipientEmail(originalRecipient[1])) {
+    return originalRecipient[1].toLowerCase();
   }
 
-  if (lower.includes("mail delivery failed") || lower.includes("undeliverable")) {
+  if (
+    lower.includes("mail delivery failed") ||
+    lower.includes("undeliverable") ||
+    lower.includes("returned mail")
+  ) {
     return extractEmailFromText(body);
   }
 
   return extractEmailFromText(body);
 }
 
-export async function getBounceStats(days = 7) {
-  const since = new Date(Date.now() - days * 86400_000);
+export async function getBounceStats(days = 7, ownerId?: string) {
+  const since = new Date(Date.now() - days * 86_400_000);
+  const ownerFilter = ownerId ? { ownerId } : {};
   const [total, recent, suppressed] = await Promise.all([
-    prisma.bounceEvent.count(),
-    prisma.bounceEvent.count({ where: { createdAt: { gte: since } } }),
+    prisma.bounceEvent.count({ where: ownerFilter }),
+    prisma.bounceEvent.count({
+      where: { createdAt: { gte: since }, ...ownerFilter },
+    }),
     prisma.suppressionList.count({
-      where: { reason: { in: ["BOUNCED", "COMPLAINT"] } },
+      where: {
+        reason: { in: ["BOUNCED", "COMPLAINT"] },
+        ...ownerFilter,
+      },
     }),
   ]);
   return { total, recent, suppressed };

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/api";
+import { assertOwns, forbidden, requireSession } from "@/lib/api";
 import {
   normalizeMessageId,
   normalizeSubject,
@@ -25,8 +25,8 @@ export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const { error } = await requireSession();
-  if (error) return error;
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
 
   const { id } = await params;
 
@@ -35,7 +35,7 @@ export async function GET(
       where: { id },
       include: {
         inbox: {
-          select: { id: true, fromEmail: true, fromName: true },
+          select: { id: true, fromEmail: true, fromName: true, ownerId: true },
         },
       },
     });
@@ -43,6 +43,7 @@ export async function GET(
     if (!root) {
       return NextResponse.json({ error: "Message not found" }, { status: 404 });
     }
+    if (!assertOwns(root.inbox.ownerId, session)) return forbidden();
 
     const peer = root.fromEmail.toLowerCase();
     const normSubj = normalizeSubject(root.subject);

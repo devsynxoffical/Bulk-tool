@@ -1,20 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/api";
+import { assertOwns, forbidden, requireSession } from "@/lib/api";
 import { enqueueCampaign, startCampaignWorker } from "@/lib/queue/campaign";
 
 export async function POST(
   _req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
-  const { error } = await requireSession();
-  if (error) return error;
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
 
   const { id } = await ctx.params;
   const campaign = await prisma.campaign.findUnique({ where: { id } });
   if (!campaign) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
+  if (!assertOwns(campaign.ownerId, session)) return forbidden();
   if (!["DRAFT", "PAUSED", "SCHEDULED"].includes(campaign.status)) {
     return NextResponse.json(
       { error: `Cannot launch campaign in ${campaign.status} status` },

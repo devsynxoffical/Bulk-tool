@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useSession } from "next-auth/react";
 import {
   LayoutDashboard,
   MailCheck,
@@ -16,6 +17,7 @@ import {
   Globe,
   Inbox,
   MailOpen,
+  UserCog,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -32,10 +34,15 @@ const nav = [
   { href: "/mailboxes", label: "Sending Mailboxes", icon: Inbox },
   { href: "/domains", label: "Sending Domains", icon: Globe },
   { href: "/settings", label: "Engine Settings", icon: Settings },
+  { href: "/users", label: "Users", icon: UserCog, adminOnly: true as const },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
+  const { data: session } = useSession();
+  const isAdmin = session?.user?.role === "ADMIN";
+
+  const items = nav.filter((item) => !("adminOnly" in item && item.adminOnly) || isAdmin);
 
   return (
     <aside className="flex h-full w-[230px] shrink-0 flex-col border-r border-zinc-200/90 bg-white">
@@ -47,15 +54,17 @@ export function Sidebar() {
           <p className="truncate text-sm font-bold tracking-tight text-zinc-900">
             DEVSYNX Suite
           </p>
-          <p className="truncate text-[10px] font-medium text-blue-600">Pure Cold Email Engine</p>
+          <p className="truncate text-[10px] font-medium text-blue-600">
+            Pure Cold Email Engine
+          </p>
         </div>
       </div>
 
-      <nav className="flex-1 space-y-0.5 p-3 overflow-y-auto">
+      <nav className="flex-1 space-y-0.5 overflow-y-auto p-3">
         <p className="px-2 pb-2 pt-1 text-[10px] font-bold uppercase tracking-wider text-zinc-400">
           Cold Email Suite
         </p>
-        {nav.map((item) => {
+        {items.map((item) => {
           const active =
             item.href === "/"
               ? pathname === "/"
@@ -68,14 +77,14 @@ export function Sidebar() {
               className={cn(
                 "flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium transition-all duration-150",
                 active
-                  ? "bg-blue-600 text-white font-semibold shadow-xs"
+                  ? "bg-blue-600 font-semibold text-white shadow-xs"
                   : "text-zinc-600 hover:bg-zinc-100/80 hover:text-zinc-900",
               )}
             >
               <Icon
                 className={cn(
                   "h-4 w-4",
-                  active ? "text-white" : "text-zinc-400 group-hover:text-zinc-600",
+                  active ? "text-white" : "text-zinc-400",
                 )}
               />
               {item.label}
@@ -86,9 +95,11 @@ export function Sidebar() {
 
       <div className="border-t border-zinc-200/80 p-3">
         <div className="rounded-xl border border-blue-200/80 bg-gradient-to-b from-blue-50/80 to-indigo-50/40 p-3 shadow-2xs">
-          <p className="text-[11px] font-bold text-blue-950">Cold Email Infrastructure</p>
-          <div className="mt-1.5 flex items-center gap-2 text-[11px] text-zinc-700 font-medium">
-            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+          <p className="text-[11px] font-bold text-blue-950">
+            Cold Email Infrastructure
+          </p>
+          <div className="mt-1.5 flex items-center gap-2 text-[11px] font-medium text-zinc-700">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
             <span>DKIM &amp; Rotation Active</span>
           </div>
         </div>

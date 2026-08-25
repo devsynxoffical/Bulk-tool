@@ -1,12 +1,15 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/api";
+import { ownerScope, requireSession } from "@/lib/api";
 
 const SENT_LIKE = new Set(["SENT", "DELIVERED", "READ", "FAILED", "SKIPPED"]);
 
-export async function GET() {
-  const { error } = await requireSession();
-  if (error) return error;
+export async function GET(req: NextRequest) {
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
+
+  const filterUserId = req.nextUrl.searchParams.get("userId");
+  const scope = ownerScope(session, filterUserId);
 
   try {
     // Source of truth for sent mail (compose + campaigns that created a Message)
@@ -14,6 +17,7 @@ export async function GET() {
       where: {
         channel: "EMAIL",
         direction: "OUTBOUND",
+        contact: { ...scope },
       },
       include: {
         contact: true,
@@ -89,7 +93,7 @@ export async function GET() {
     // Campaign rows only when there is no Message yet (avoids duplicate {{company}} rows)
     const campaignRecipients = await prisma.campaignRecipient.findMany({
       where: {
-        campaign: { channel: "EMAIL" },
+        campaign: { channel: "EMAIL", ...scope },
         status: { in: ["SENT", "DELIVERED", "READ", "FAILED", "SKIPPED"] },
         messageId: null,
       },

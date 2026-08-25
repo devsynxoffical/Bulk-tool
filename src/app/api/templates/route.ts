@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/api";
+import {
+  ownerScope,
+  requireSession,
+  resolveOwnerId,
+} from "@/lib/api";
 
 const schema = z
   .object({
@@ -19,19 +23,26 @@ const schema = z
     path: ["subject"],
   });
 
-export async function GET() {
-  const { error } = await requireSession();
-  if (error) return error;
+export async function GET(req: NextRequest) {
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
+
+  const filterUserId = req.nextUrl.searchParams.get("userId");
+  const scope = ownerScope(session, filterUserId);
 
   const templates = await prisma.template.findMany({
+    where: { ...scope },
     orderBy: { updatedAt: "desc" },
   });
   return NextResponse.json(templates);
 }
 
 export async function POST(req: NextRequest) {
-  const { error } = await requireSession();
-  if (error) return error;
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
+
+  const filterUserId = req.nextUrl.searchParams.get("userId");
+  const ownerId = resolveOwnerId(session, filterUserId);
 
   const parsed = schema.safeParse(await req.json());
   if (!parsed.success) {
@@ -44,6 +55,7 @@ export async function POST(req: NextRequest) {
 
     const existing = await prisma.template.findFirst({
       where: {
+        ownerId,
         name: sanitizeName,
         language: "en_US",
         channel: parsed.data.channel,
@@ -68,6 +80,7 @@ export async function POST(req: NextRequest) {
 
     const template = await prisma.template.create({
       data: {
+        ownerId,
         channel: parsed.data.channel,
         name: sanitizeName,
         language: "en_US",

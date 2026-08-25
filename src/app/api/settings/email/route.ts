@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma, ensureDbSchema } from "@/lib/prisma";
-import { requireSession } from "@/lib/api";
+import {
+  assertOwns,
+  forbidden,
+  ownerScope,
+  requireSession,
+  resolveOwnerId,
+} from "@/lib/api";
 import {
   DEFAULT_INBOX_DAILY_LIMIT,
   extractDomainFromEmail,
@@ -11,7 +17,6 @@ import {
   getWarmupDayNumber,
   resolveWarmupContext,
 } from "@/lib/email/warmup";
-import { restartMailboxWarmup } from "@/lib/email/warmup-sync";
 import { getInboxOpenStats, recalculateInboxHealth } from "@/lib/email/health";
 
 const createSchema = z.object({
@@ -49,18 +54,29 @@ const toggleActiveSchema = z.object({
 
 async function resolveDomainId(
   fromEmail: string,
-  explicitDomainId?: string | null,
-): Promise<string | null> {
-  if (explicitDomainId) return explicitDomainId;
+  explicitDomainId: string | null | undefined,
+  ownerId: string,
+): Promise<{ domainId: string | null; forbidden: boolean }> {
+  if (explicitDomainId) {
+    const domain = await prisma.sendingDomain.findUnique({
+      where: { id: explicitDomainId },
+      select: { id: true, ownerId: true },
+    });
+    if (!domain) return { domainId: null, forbidden: false };
+    if (domain.ownerId !== ownerId) return { domainId: null, forbidden: true };
+    return { domainId: domain.id, forbidden: false };
+  }
 
   const domainName = extractDomainFromEmail(fromEmail);
-  if (!domainName) return null;
+  if (!domainName) return { domainId: null, forbidden: false };
 
   const domain = await prisma.sendingDomain.findUnique({
     where: { domainName },
-    select: { id: true },
+    select: { id: true, ownerId: true },
   });
-  return domain?.id ?? null;
+  if (!domain) return { domainId: null, forbidden: false };
+  if (domain.ownerId !== ownerId) return { domainId: null, forbidden: false };
+  return { domainId: domain.id, forbidden: false };
 }
 
 function formatAccount(
@@ -116,13 +132,17 @@ function formatAccount(
   };
 }
 
-export async function GET() {
-  const { error } = await requireSession();
-  if (error) return error;
+export async function GET(req: NextRequest) {
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
+
+  const filterUserId = req.nextUrl.searchParams.get("userId");
+  const scope = ownerScope(session, filterUserId);
 
   try {
     await ensureDbSchema();
     const accounts = await prisma.emailAccount.findMany({
+      where: { ...scope },
       orderBy: { createdAt: "desc" },
       include: {
         domain: {
@@ -200,8 +220,11 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const { error } = await requireSession();
-  if (error) return error;
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
+
+  const filterUserId = req.nextUrl.searchParams.get("userId");
+  const ownerId = resolveOwnerId(session, filterUserId);
 
   try {
     await ensureDbSchema();
@@ -209,6 +232,14 @@ export async function POST(req: NextRequest) {
 
     const sigOnly = signatureOnlySchema.safeParse(body);
     if (sigOnly.success) {
+      const existing = await prisma.emailAccount.findUnique({
+        where: { id: sigOnly.data.id },
+      });
+      if (!existing) {
+        return NextResponse.json({ error: "Mailbox not found" }, { status: 404 });
+      }
+      if (!assertOwns(existing.ownerId, session)) return forbidden();
+
       const account = await prisma.emailAccount.update({
         where: { id: sigOnly.data.id },
         data: { signature: sigOnly.data.signature },
@@ -224,6 +255,14 @@ export async function POST(req: NextRequest) {
       !("host" in body) &&
       !("fromEmail" in body)
     ) {
+      const existing = await prisma.emailAccount.findUnique({
+        where: { id: toggleOnly.data.id },
+      });
+      if (!existing) {
+        return NextResponse.json({ error: "Mailbox not found" }, { status: 404 });
+      }
+      if (!assertOwns(existing.ownerId, session)) return forbidden();
+
       const account = await prisma.emailAccount.update({
         where: { id: toggleOnly.data.id },
         data: { isActive: toggleOnly.data.isActive },
@@ -265,12 +304,15 @@ export async function POST(req: NextRequest) {
     const isPort465 = Number(port) === 465;
     const normalizedFrom = rest.fromEmail.trim().toLowerCase();
     const normalizedUser = rest.username.trim();
-    const resolvedDomainId = await resolveDomainId(normalizedFrom, domainId);
+    const resolved = await resolveDomainId(normalizedFrom, domainId, ownerId);
+    if (resolved.forbidden) return forbidden();
+    const resolvedDomainId = resolved.domainId;
     const now = new Date();
     const enablingWarmup = warmupEnabled ?? true;
 
     const duplicate = await prisma.emailAccount.findFirst({
       where: {
+        ownerId,
         fromEmail: { equals: normalizedFrom, mode: "insensitive" },
         ...(id ? { NOT: { id } } : {}),
       },
@@ -306,6 +348,11 @@ export async function POST(req: NextRequest) {
     let account;
     if (id) {
       const existing = await prisma.emailAccount.findUnique({ where: { id } });
+      if (!existing) {
+        return NextResponse.json({ error: "Mailbox not found" }, { status: 404 });
+      }
+      if (!assertOwns(existing.ownerId, session)) return forbidden();
+
       if (existing && enablingWarmup && !existing.warmupEnabled) {
         updateData.warmupStartedAt = now;
         updateData.warmupStage = 1;
@@ -328,6 +375,7 @@ export async function POST(req: NextRequest) {
       account = await prisma.emailAccount.create({
         data: {
           ...updateData,
+          ownerId,
           fromEmail: normalizedFrom,
           password: password ?? "",
           warmupStartedAt: enablingWarmup ? now : null,
@@ -347,14 +395,20 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const { error } = await requireSession();
-  if (error) return error;
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
 
   try {
     const id = req.nextUrl.searchParams.get("id");
     if (!id) {
       return NextResponse.json({ error: "Account ID is missing" }, { status: 400 });
     }
+
+    const existing = await prisma.emailAccount.findUnique({ where: { id } });
+    if (!existing) {
+      return NextResponse.json({ error: "Mailbox not found" }, { status: 404 });
+    }
+    if (!assertOwns(existing.ownerId, session)) return forbidden();
 
     await prisma.emailAccount.delete({ where: { id } });
 

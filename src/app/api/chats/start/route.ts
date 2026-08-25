@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/api";
+import { requireSession, resolveOwnerId } from "@/lib/api";
 import { normalizePhone } from "@/lib/utils";
 
 const schema = z.discriminatedUnion("channel", [
@@ -18,8 +18,11 @@ const schema = z.discriminatedUnion("channel", [
 ]);
 
 export async function POST(req: NextRequest) {
-  const { error } = await requireSession();
-  if (error) return error;
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
+
+  const filterUserId = req.nextUrl.searchParams.get("userId");
+  const ownerId = resolveOwnerId(session, filterUserId);
 
   const parsed = schema.safeParse(await req.json());
   if (!parsed.success) {
@@ -40,11 +43,12 @@ export async function POST(req: NextRequest) {
       }
 
       const contact = await prisma.contact.upsert({
-        where: { phone },
+        where: { ownerId_phone: { ownerId, phone } },
         update: {
           ...(parsed.data.name ? { name: parsed.data.name } : {}),
         },
         create: {
+          ownerId,
           phone,
           name: parsed.data.name || null,
         },
@@ -88,11 +92,12 @@ export async function POST(req: NextRequest) {
 
     const email = parsed.data.email.toLowerCase().trim();
     const contact = await prisma.contact.upsert({
-      where: { email },
+      where: { ownerId_email: { ownerId, email } },
       update: {
         ...(parsed.data.name ? { name: parsed.data.name } : {}),
       },
       create: {
+        ownerId,
         email,
         name: parsed.data.name || null,
       },

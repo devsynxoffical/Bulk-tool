@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma, ensureDbSchema } from "@/lib/prisma";
-import { requireSession } from "@/lib/api";
+import {
+  assertOwns,
+  forbidden,
+  ownerScope,
+  requireSession,
+  resolveOwnerId,
+} from "@/lib/api";
 import { generateDkimKeyPair } from "@/lib/email/dkim";
 import { verifyDomainDns } from "@/lib/email/dns-checker";
 import {
@@ -13,13 +19,17 @@ const schema = z.object({
   domainName: z.string().min(3),
 });
 
-export async function GET() {
-  const { error } = await requireSession();
-  if (error) return error;
+export async function GET(req: NextRequest) {
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
+
+  const filterUserId = req.nextUrl.searchParams.get("userId");
+  const scope = ownerScope(session, filterUserId);
 
   try {
     await ensureDbSchema();
     const domains = await prisma.sendingDomain.findMany({
+      where: { ...scope },
       orderBy: { createdAt: "desc" },
       include: {
         _count: { select: { mailboxes: true } },
@@ -55,6 +65,7 @@ export async function GET() {
 
         const mailboxCount = await prisma.emailAccount.count({
           where: {
+            ...scope,
             OR: [
               { domainId: d.id },
               { fromEmail: { endsWith: `@${d.domainName}`, mode: "insensitive" } },
@@ -93,8 +104,11 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const { error } = await requireSession();
-  if (error) return error;
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
+
+  const filterUserId = req.nextUrl.searchParams.get("userId");
+  const ownerId = resolveOwnerId(session, filterUserId);
 
   try {
     await ensureDbSchema();
@@ -115,6 +129,13 @@ export async function POST(req: NextRequest) {
       where: { domainName },
     });
 
+    if (domainRecord && !assertOwns(domainRecord.ownerId, session)) {
+      return NextResponse.json(
+        { error: "Domain already registered by another user" },
+        { status: 409 },
+      );
+    }
+
     const spfHint = buildSpfRecordHint(domainName);
 
     if (!domainRecord || !domainRecord.dkimPrivateKey) {
@@ -122,6 +143,7 @@ export async function POST(req: NextRequest) {
       domainRecord = await prisma.sendingDomain.upsert({
         where: { domainName },
         create: {
+          ownerId,
           domainName,
           dkimPrivateKey: keyPair.privateKey,
           dkimPublicKey: keyPair.publicKey,
@@ -180,12 +202,18 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const { error } = await requireSession();
-  if (error) return error;
+  const { session, error } = await requireSession();
+  if (error || !session) return error;
 
   try {
     const id = req.nextUrl.searchParams.get("id");
     if (!id) return NextResponse.json({ error: "Domain ID missing" }, { status: 400 });
+
+    const existing = await prisma.sendingDomain.findUnique({ where: { id } });
+    if (!existing) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    if (!assertOwns(existing.ownerId, session)) return forbidden();
 
     await prisma.sendingDomain.delete({ where: { id } });
 

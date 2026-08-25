@@ -11,16 +11,49 @@ export async function GET(req: NextRequest) {
   const normalized = email.trim().toLowerCase();
 
   try {
-    // 1. Add to suppression list
-    await prisma.suppressionList.upsert({
-      where: { email: normalized },
-      create: { email: normalized, reason: "UNSUBSCRIBED" },
-      update: { reason: "UNSUBSCRIBED" },
+    const contacts = await prisma.contact.findMany({
+      where: { email: { equals: normalized, mode: "insensitive" } },
+      select: { ownerId: true },
     });
 
-    // 2. Mark contact opted out
+    const ownerIds = [...new Set(contacts.map((c) => c.ownerId))];
+
+    // Also suppress for any mailbox owner who mailed this address
+    const mailOwners = await prisma.message.findMany({
+      where: {
+        channel: "EMAIL",
+        direction: "OUTBOUND",
+        contact: { email: { equals: normalized, mode: "insensitive" } },
+        inboxId: { not: null },
+      },
+      select: { inboxId: true },
+      take: 50,
+    });
+    if (mailOwners.length) {
+      const inboxes = await prisma.emailAccount.findMany({
+        where: {
+          id: {
+            in: mailOwners
+              .map((m) => m.inboxId)
+              .filter((id): id is string => Boolean(id)),
+          },
+        },
+        select: { ownerId: true },
+      });
+      for (const i of inboxes) ownerIds.push(i.ownerId);
+    }
+
+    const uniqueOwners = [...new Set(ownerIds)];
+    for (const ownerId of uniqueOwners) {
+      await prisma.suppressionList.upsert({
+        where: { ownerId_email: { ownerId, email: normalized } },
+        create: { ownerId, email: normalized, reason: "UNSUBSCRIBED" },
+        update: { reason: "UNSUBSCRIBED" },
+      });
+    }
+
     await prisma.contact.updateMany({
-      where: { email: normalized },
+      where: { email: { equals: normalized, mode: "insensitive" } },
       data: { emailOptedOut: true },
     });
 
@@ -49,7 +82,9 @@ export async function GET(req: NextRequest) {
     return new NextResponse(html, {
       headers: { "Content-Type": "text/html" },
     });
-  } catch (e) {
-    return new NextResponse("Error processing unsubscribe request", { status: 500 });
+  } catch {
+    return new NextResponse("Error processing unsubscribe request", {
+      status: 500,
+    });
   }
 }

@@ -161,7 +161,12 @@ export async function processCampaignJob(
 
   if (recipient.contact.email) {
     const suppressed = await prisma.suppressionList.findUnique({
-      where: { email: recipient.contact.email.toLowerCase() },
+      where: {
+        ownerId_email: {
+          ownerId: recipient.campaign.ownerId,
+          email: recipient.contact.email.toLowerCase(),
+        },
+      },
     });
     if (suppressed) {
       await prisma.campaignRecipient.update({
@@ -175,11 +180,12 @@ export async function processCampaignJob(
     }
   }
 
-  const sendingInbox = await getNextSendingInbox();
+  const ownerId = recipient.campaign.ownerId;
+  const sendingInbox = await getNextSendingInbox({ ownerId });
   if (!sendingInbox) {
-    const waitMs = await getMsUntilInboxAvailable();
+    const waitMs = await getMsUntilInboxAvailable(ownerId);
     const inboxes = await prisma.emailAccount.findMany({
-      where: { isActive: true },
+      where: { isActive: true, ownerId },
       include: {
         domain: {
           select: {
