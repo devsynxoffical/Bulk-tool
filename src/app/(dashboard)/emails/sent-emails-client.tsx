@@ -126,7 +126,7 @@ export function SentEmailsClient() {
             type="button"
             variant="outline"
             size="sm"
-            onClick={loadEmails}
+            onClick={() => void loadEmails()}
             disabled={loading}
             className="flex items-center gap-1.5 text-xs"
           >
