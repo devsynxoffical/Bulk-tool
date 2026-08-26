@@ -57,8 +57,8 @@ export function SentEmailsClient() {
   const [filterStatus, setFilterStatus] = useState<"ALL" | "READ" | "DELIVERED" | "FAILED">("ALL");
   const [selectedEmail, setSelectedEmail] = useState<SentEmailRecord | null>(null);
 
-  async function loadEmails() {
-    setLoading(true);
+  async function loadEmails(opts?: { silent?: boolean }) {
+    if (!opts?.silent) setLoading(true);
     try {
       const res = await fetch("/api/emails");
       if (res.ok) {
@@ -77,7 +77,7 @@ export function SentEmailsClient() {
     } catch {
       // ignore transient network errors
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }
 
