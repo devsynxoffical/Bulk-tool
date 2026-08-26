@@ -23,8 +23,8 @@ const ADMIN_CREDENTIALS = {
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState(ADMIN_CREDENTIALS.email);
-  const [password, setPassword] = useState(ADMIN_CREDENTIALS.password);
+  const [email, setEmail] = useState<string>(ADMIN_CREDENTIALS.email);
+  const [password, setPassword] = useState<string>(ADMIN_CREDENTIALS.password);
   const [showPassword, setShowPassword] = useState(true);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);

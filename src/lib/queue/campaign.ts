@@ -14,12 +14,27 @@ import { WORKER_CONCURRENCY } from "@/lib/email/constants";
 import { applyAuthFailureHealthCap } from "@/lib/email/health";
 import {
   checkDailyReset,
-  explainInboxAvailability,
   getMsUntilInboxAvailable,
   getNextSendingInbox,
 } from "@/lib/email/rotator";
 
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
+
+/** Throttle "no inbox ready" logs — one line per owner per 60s */
+const noInboxLogAt = new Map<string, number>();
+function logNoInboxReadyThrottled(
+  ownerId: string,
+  waitMs: number,
+  jobId: string | undefined,
+) {
+  const now = Date.now();
+  const last = noInboxLogAt.get(ownerId) || 0;
+  if (now - last < 60_000) return;
+  noInboxLogAt.set(ownerId, now);
+  console.warn(
+    `Campaign: no inbox ready for owner ${ownerId.slice(0, 8)}… (e.g. job ${jobId}) — retry in ~${Math.round(waitMs / 1000)}s. Resume mailboxes or wait for daily/warmup caps.`,
+  );
+}
 
 let connection: IORedis | null = null;
 let campaignQueue: Queue | null = null;
@@ -184,23 +199,8 @@ export async function processCampaignJob(
   const sendingInbox = await getNextSendingInbox({ ownerId });
   if (!sendingInbox) {
     const waitMs = await getMsUntilInboxAvailable(ownerId);
-    const inboxes = await prisma.emailAccount.findMany({
-      where: { isActive: true, ownerId },
-      include: {
-        domain: {
-          select: {
-            id: true,
-            domainName: true,
-            dailyLimit: true,
-            sentToday: true,
-            isVerified: true,
-          },
-        },
-      },
-    });
-    console.warn(
-      `Campaign job ${job.id}: no inbox ready, delaying ${Math.round(waitMs / 1000)}s — ${explainInboxAvailability(inboxes)}`,
-    );
+    // Avoid flooding Railway (500 logs/sec limit) when many jobs wait on caps
+    logNoInboxReadyThrottled(ownerId, waitMs, job.id);
     await job.moveToDelayed(Date.now() + waitMs, token ?? job.token);
     throw new DelayedError("No sending inbox available");
   }
