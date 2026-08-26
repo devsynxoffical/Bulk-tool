@@ -12,8 +12,11 @@ import {
   RECOMMENDED_INBOX_COUNT,
   SYSTEM_DAILY_TARGET,
 } from "@/lib/email/constants";
+import { requirePageSession } from "@/lib/page-auth";
 
 export default async function OverviewPage() {
+  const { scope } = await requirePageSession();
+
   const [
     contacts,
     campaigns,
@@ -23,21 +26,24 @@ export default async function OverviewPage() {
     recentCampaigns,
     recentMessages,
   ] = await Promise.all([
-    prisma.contact.count(),
-    prisma.campaign.count(),
+    prisma.contact.count({ where: scope }),
+    prisma.campaign.count({ where: scope }),
     prisma.message.count({
       where: {
         createdAt: { gte: new Date(new Date().setHours(0, 0, 0, 0)) },
+        contact: scope,
       },
     }),
-    prisma.emailAccount.count({ where: { isActive: true } }),
-    getSendingCapacityStats(),
+    prisma.emailAccount.count({ where: { isActive: true, ...scope } }),
+    getSendingCapacityStats(scope.ownerId),
     prisma.campaign.findMany({
+      where: scope,
       take: 5,
       orderBy: { createdAt: "desc" },
       include: { template: true },
     }),
     prisma.message.findMany({
+      where: { contact: scope },
       take: 8,
       orderBy: { createdAt: "desc" },
       include: { contact: true },

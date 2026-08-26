@@ -2,10 +2,13 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
+import { requirePageSession } from "@/lib/page-auth";
 import { CampaignsList } from "./campaigns-list";
 
 export default async function CampaignsPage() {
+  const { scope } = await requirePageSession();
   const campaigns = await prisma.campaign.findMany({
+    where: scope,
     orderBy: { createdAt: "desc" },
     include: { template: true },
   });

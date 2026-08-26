@@ -1,9 +1,12 @@
 import { prisma } from "@/lib/prisma";
 import { PageHeader } from "@/components/layout/page-header";
 import { ContactsClient } from "@/components/contacts/contacts-client";
+import { requirePageSession } from "@/lib/page-auth";
 
 export default async function ContactsPage() {
+  const { scope } = await requirePageSession();
   const contacts = await prisma.contact.findMany({
+    where: scope,
     orderBy: { createdAt: "desc" },
     take: 500,
   });

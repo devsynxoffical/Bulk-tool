@@ -5,6 +5,8 @@ import { PageHeader, StatCard } from "@/components/layout/page-header";
 import { Badge, campaignStatusTone } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CampaignControls } from "@/components/campaigns/campaign-controls";
+import { assertOwns } from "@/lib/api";
+import { requirePageSession } from "@/lib/page-auth";
 
 export default async function CampaignDetailPage({
   params,
@@ -12,6 +14,7 @@ export default async function CampaignDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const { session } = await requirePageSession();
   const campaign = await prisma.campaign.findUnique({
     where: { id },
     include: {
@@ -24,7 +27,7 @@ export default async function CampaignDetailPage({
     },
   });
 
-  if (!campaign) notFound();
+  if (!campaign || !assertOwns(campaign.ownerId, session)) notFound();
 
   return (
     <div>
