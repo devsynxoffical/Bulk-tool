@@ -83,7 +83,12 @@ export function SentEmailsClient() {
 
   useEffect(() => {
     void loadEmails();
-    const interval = setInterval(() => void loadEmails(), 10000);
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      void loadEmails({ silent: true });
+    }, 30_000);
     return () => clearInterval(interval);
   }, []);
 

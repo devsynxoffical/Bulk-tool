@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState, useTransition } from "react";
 import { useSession } from "next-auth/react";
 import {
   LayoutDashboard,
@@ -18,6 +19,7 @@ import {
   Inbox,
   MailOpen,
   UserCog,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -41,8 +43,16 @@ export function Sidebar() {
   const pathname = usePathname();
   const { data: session } = useSession();
   const isAdmin = session?.user?.role === "ADMIN";
+  const [isPending, startTransition] = useTransition();
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
 
-  const items = nav.filter((item) => !("adminOnly" in item && item.adminOnly) || isAdmin);
+  useEffect(() => {
+    setPendingHref(null);
+  }, [pathname]);
+
+  const items = nav.filter(
+    (item) => !("adminOnly" in item && item.adminOnly) || isAdmin,
+  );
 
   return (
     <aside className="flex h-full w-[230px] shrink-0 flex-col border-r border-zinc-200/90 bg-white">
@@ -69,24 +79,36 @@ export function Sidebar() {
             item.href === "/"
               ? pathname === "/"
               : pathname.startsWith(item.href);
+          const navigating = isPending && pendingHref === item.href;
           const Icon = item.icon;
           return (
             <Link
               key={item.href}
               href={item.href}
+              prefetch
+              onClick={() => {
+                if (item.href === pathname) return;
+                setPendingHref(item.href);
+                startTransition(() => undefined);
+              }}
               className={cn(
                 "flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium transition-all duration-150",
                 active
                   ? "bg-blue-600 font-semibold text-white shadow-xs"
                   : "text-zinc-600 hover:bg-zinc-100/80 hover:text-zinc-900",
+                navigating && !active && "bg-blue-50 text-blue-700",
               )}
             >
-              <Icon
-                className={cn(
-                  "h-4 w-4",
-                  active ? "text-white" : "text-zinc-400",
-                )}
-              />
+              {navigating && !active ? (
+                <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+              ) : (
+                <Icon
+                  className={cn(
+                    "h-4 w-4",
+                    active ? "text-white" : "text-zinc-400",
+                  )}
+                />
+              )}
               {item.label}
             </Link>
           );

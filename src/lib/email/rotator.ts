@@ -52,7 +52,14 @@ function inboxBounceRateOk(inbox: InboxWithDomain): boolean {
   return inbox.bounceCount / inbox.sentToday < BOUNCE_RATE_PAUSE_THRESHOLD;
 }
 
+let lastDailyResetKey: string | null = null;
+
 export async function checkDailyReset() {
+  // Only hit DB once per calendar day per process (was running on every capacity/send call)
+  const key = new Date().toISOString().slice(0, 10);
+  if (lastDailyResetKey === key) return;
+  lastDailyResetKey = key;
+
   await ensureDbSchema();
 
   const today = new Date();

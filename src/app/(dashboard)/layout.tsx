@@ -14,7 +14,7 @@ export default async function DashboardLayout({
   if (!session?.user) redirect("/login");
 
   return (
-    <SessionProvider>
+    <SessionProvider session={session}>
       <div className="flex h-screen overflow-hidden bg-zinc-50">
         <Sidebar />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">

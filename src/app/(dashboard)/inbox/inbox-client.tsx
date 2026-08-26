@@ -267,7 +267,15 @@ export function InboxClient() {
 
   useEffect(() => {
     void loadInbox();
-    const interval = setInterval(() => void loadInbox({ silent: true }), 20_000);
+    const interval = setInterval(() => {
+      if (
+        typeof document !== "undefined" &&
+        document.visibilityState === "hidden"
+      ) {
+        return;
+      }
+      void loadInbox({ silent: true });
+    }, 45_000);
     return () => clearInterval(interval);
   }, [loadInbox]);
 
