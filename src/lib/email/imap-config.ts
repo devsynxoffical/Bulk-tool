@@ -108,14 +108,26 @@ export async function resolveMailboxImapConfigs(options?: {
 export function isBounceNotification(subject: string, body: string): boolean {
   const s = subject.toLowerCase();
   const b = body.toLowerCase();
-  return (
-    s.includes("delivery") ||
+
+  // Keep this strict — bare words like "delivery" / "failure" match normal mail
+  // and used to inflate bounce counts → pause loops.
+  if (
     s.includes("undeliverable") ||
-    s.includes("failure") ||
+    s.includes("undelivered mail") ||
     s.includes("returned mail") ||
     s.includes("mail delivery failed") ||
-    b.includes("final-recipient") ||
-    b.includes("status: 5.") ||
-    b.includes("status: 4.")
-  );
+    s.includes("delivery status notification") ||
+    s.includes("delivery failure") ||
+    s.includes("failure notice") ||
+    s.includes("mail delivery subsystem") ||
+    s.includes("non-delivery") ||
+    s.includes("nda:") // Non-Delivery Advisory style subjects
+  ) {
+    return true;
+  }
+
+  if (b.includes("final-recipient") && /status:\s*5\./i.test(b)) return true;
+  if (/\baction:\s*failed\b/i.test(b) && /status:\s*5\./i.test(b)) return true;
+
+  return false;
 }

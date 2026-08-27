@@ -17,7 +17,7 @@ import {
   getWarmupDayNumber,
   resolveWarmupContext,
 } from "@/lib/email/warmup";
-import { getInboxOpenStats, recalculateInboxHealth } from "@/lib/email/health";
+import { getInboxOpenStats } from "@/lib/email/health";
 
 const createSchema = z.object({
   id: z.string().optional(),
@@ -185,19 +185,22 @@ export async function GET(req: NextRequest) {
       }),
     );
 
-    // Sync health from open rate (clamped 0–100) and return open stats
+    // Sync health score for display — never pause from a page load
     const formatted = await Promise.all(
       accounts.map(async (acc) => {
         let stats;
         try {
-          // Fix legacy negative health or drift from open-rate formula
-          if (acc.healthScore < 0 || acc.healthScore > 100) {
-            stats = await recalculateInboxHealth(acc.id);
-          } else {
-            stats = await getInboxOpenStats(acc.id);
-            if (stats.sampleReady && stats.healthScore !== acc.healthScore) {
-              stats = await recalculateInboxHealth(acc.id);
-            }
+          stats = await getInboxOpenStats(acc.id);
+          if (
+            stats.sampleReady &&
+            (acc.healthScore < 0 ||
+              acc.healthScore > 100 ||
+              stats.healthScore !== acc.healthScore)
+          ) {
+            await prisma.emailAccount.update({
+              where: { id: acc.id },
+              data: { healthScore: stats.healthScore },
+            });
           }
         } catch {
           stats = undefined;

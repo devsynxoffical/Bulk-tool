@@ -22,6 +22,13 @@ export const SENDING_DAY_SECONDS = 86400;
 /** Bounce rate above this pauses an inbox automatically. */
 export const BOUNCE_RATE_PAUSE_THRESHOLD = 0.05;
 
+/**
+ * Days of recent activity used for auto-pause / auto-resume decisions.
+ * Health score still uses OPEN_RATE_LOOKBACK_DAYS — using that for pause caused
+ * resume→pause loops on old bounce history.
+ */
+export const BOUNCE_PAUSE_LOOKBACK_DAYS = 1;
+
 /** Hours to wait after an auto-pause (bounce) before resuming. */
 export const AUTO_RESUME_BOUNCE_HOURS = 6;
 

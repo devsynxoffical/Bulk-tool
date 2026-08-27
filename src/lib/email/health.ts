@@ -4,10 +4,10 @@ import {
   OPEN_RATE_LOOKBACK_DAYS,
   OPEN_RATE_MIN_SAMPLE,
   BOUNCE_RATE_PAUSE_THRESHOLD,
+  BOUNCE_PAUSE_LOOKBACK_DAYS,
   AUTO_RESUME_BOUNCE_HOURS,
   AUTO_RESUME_AUTH_HOURS,
 } from "./constants";
-
 
 export type InboxOpenStats = {
   sent: number;
@@ -53,8 +53,10 @@ export function computeHealthFromOpenRate(params: {
 export async function getInboxOpenStats(
   inboxId: string,
   lookbackDays = OPEN_RATE_LOOKBACK_DAYS,
+  options?: { hardBouncesOnly?: boolean },
 ): Promise<InboxOpenStats> {
   const since = new Date(Date.now() - lookbackDays * 86_400_000);
+  const hardOnly = options?.hardBouncesOnly ?? false;
 
   const [sent, opened, bounceCount] = await Promise.all([
     prisma.message.count({
@@ -79,6 +81,9 @@ export async function getInboxOpenStats(
       where: {
         inboxId,
         createdAt: { gte: since },
+        ...(hardOnly
+          ? { reason: { in: ["HARD_BOUNCE", "COMPLAINT"] } }
+          : {}),
       },
     }),
   ]);
@@ -100,17 +105,29 @@ export async function getInboxOpenStats(
 
 /**
  * Recompute and persist mailbox health from open rate (clamped 0–100).
- * Auto-pause only on high bounce rate — low open rate lowers score but keeps sending.
+ * Auto-pause uses recent hard-bounce rate only — not the full health lookback —
+ * so old history cannot immediately re-pause after resume.
  */
-export async function recalculateInboxHealth(inboxId: string) {
+export async function recalculateInboxHealth(
+  inboxId: string,
+  options?: { allowPause?: boolean },
+) {
+  const allowPause = options?.allowPause !== false;
   const stats = await getInboxOpenStats(inboxId);
+  const recent = await getInboxOpenStats(inboxId, BOUNCE_PAUSE_LOOKBACK_DAYS, {
+    hardBouncesOnly: true,
+  });
 
   await prisma.emailAccount.update({
     where: { id: inboxId },
     data: { healthScore: stats.healthScore },
   });
 
-  if (stats.sampleReady && stats.bounceRate >= BOUNCE_RATE_PAUSE_THRESHOLD) {
+  if (
+    allowPause &&
+    recent.sampleReady &&
+    recent.bounceRate >= BOUNCE_RATE_PAUSE_THRESHOLD
+  ) {
     const inbox = await prisma.emailAccount.findUnique({
       where: { id: inboxId },
       select: { isActive: true },
@@ -124,6 +141,9 @@ export async function recalculateInboxHealth(inboxId: string) {
           pauseReason: "AUTO_BOUNCE",
         },
       });
+      console.warn(
+        `Auto-paused mailbox ${inboxId}: recent bounce rate ${(recent.bounceRate * 100).toFixed(1)}% (${recent.bounceCount}/${recent.sent})`,
+      );
     }
   }
 
@@ -199,8 +219,15 @@ export async function autoResumePausedMailboxes(): Promise<number> {
   for (const inbox of paused) {
     if (now < resumeEligibleAt(inbox.pausedAt, inbox.pauseReason)) continue;
 
-    const stats = await getInboxOpenStats(inbox.id, 1);
-    if (stats.sampleReady && stats.bounceRate >= BOUNCE_RATE_PAUSE_THRESHOLD) {
+    const recent = await getInboxOpenStats(
+      inbox.id,
+      BOUNCE_PAUSE_LOOKBACK_DAYS,
+      { hardBouncesOnly: true },
+    );
+    if (
+      recent.sampleReady &&
+      recent.bounceRate >= BOUNCE_RATE_PAUSE_THRESHOLD
+    ) {
       continue;
     }
 
