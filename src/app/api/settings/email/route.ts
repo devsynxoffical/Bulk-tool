@@ -125,6 +125,8 @@ function formatAccount(
     daysUntilNextStage: warmup.daysUntilNextStage,
     warmupStartedAt: warmup.startedAt.toISOString(),
     isActive: acc.isActive,
+    pauseReason: acc.pauseReason ?? null,
+    pausedAt: acc.pausedAt?.toISOString() ?? null,
     hasPassword: Boolean(acc.password),
     lastInboxSyncAt: acc.lastInboxSyncAt?.toISOString() ?? null,
     inboxSyncError: acc.inboxSyncError ?? null,
@@ -265,7 +267,13 @@ export async function POST(req: NextRequest) {
 
       const account = await prisma.emailAccount.update({
         where: { id: toggleOnly.data.id },
-        data: { isActive: toggleOnly.data.isActive },
+        data: toggleOnly.data.isActive
+          ? { isActive: true, pausedAt: null, pauseReason: null }
+          : {
+              isActive: false,
+              pausedAt: new Date(),
+              pauseReason: "MANUAL",
+            },
       });
       return NextResponse.json({
         success: true,

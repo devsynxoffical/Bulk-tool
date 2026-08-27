@@ -51,18 +51,28 @@ export async function ensureDbSchema() {
       await prisma.$queryRawUnsafe(
         `SELECT "ownerId" FROM "EmailAccount" WHERE false`,
       );
-      globalForPrisma.dbSchemaEnsured = true;
-      return;
     } catch {
-      // Schema incomplete — run full ensure below
+      try {
+        await runFullSchemaEnsure();
+      } catch (err) {
+        console.error("Auto-schema sync warning:", err);
+      }
     }
 
     try {
-      await runFullSchemaEnsure();
-      globalForPrisma.dbSchemaEnsured = true;
-    } catch (err) {
-      console.error("Auto-schema sync warning:", err);
+      await prisma.$queryRawUnsafe(
+        `SELECT "pauseReason" FROM "EmailAccount" WHERE false`,
+      );
+    } catch {
+      await prisma.$executeRawUnsafe(
+        `ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "pausedAt" TIMESTAMP(3)`,
+      );
+      await prisma.$executeRawUnsafe(
+        `ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "pauseReason" TEXT`,
+      );
     }
+
+    globalForPrisma.dbSchemaEnsured = true;
   })();
 
   try {
@@ -117,6 +127,8 @@ async function runFullSchemaEnsure() {
     `ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "lastInboxPollUid" INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "lastInboxSyncAt" TIMESTAMP(3)`,
     `ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "inboxSyncError" TEXT`,
+    `ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "pausedAt" TIMESTAMP(3)`,
+    `ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "pauseReason" TEXT`,
     `ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "ownerId" TEXT`,
   ];
   for (const sql of emailAccountCols) {

@@ -64,6 +64,8 @@ type EmailAccount = {
   warmupLabel: string;
   daysUntilNextStage: number | null;
   isActive: boolean;
+  pauseReason?: string | null;
+  pausedAt?: string | null;
   hasPassword: boolean;
   lastInboxSyncAt?: string | null;
   inboxSyncError?: string | null;
@@ -443,9 +445,20 @@ export function MailboxManager() {
                         {acc.domainVerified ? " · DNS verified" : " · DNS pending"}
                       </p>
                     </div>
+                    <div className="flex flex-col items-end gap-1">
                     <Badge tone={acc.isActive ? "success" : "default"}>
                       {acc.isActive ? "Active" : "Paused"}
                     </Badge>
+                    {!acc.isActive ? (
+                      <p className="text-[10px] text-zinc-400">
+                        {acc.pauseReason === "MANUAL"
+                          ? "Manual — won’t auto-resume"
+                          : acc.pauseReason === "AUTH"
+                            ? "Auth pause — auto-resumes in 24h"
+                            : "Auto-paused — resumes in ~6h if bounce rate cools"}
+                      </p>
+                    ) : null}
+                    </div>
                   </div>
                   <div className="flex justify-between text-xs text-zinc-500">
                     <span>

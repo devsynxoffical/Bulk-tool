@@ -7,6 +7,7 @@ import {
   syncAllInboxesOnce,
 } from "../src/lib/email/inbox-poller";
 import { syncWarmupStages } from "../src/lib/email/warmup-sync";
+import { autoResumePausedMailboxes } from "../src/lib/email/health";
 
 async function bootWorker() {
   console.log("Starting DEVSYNX Email Outreach Worker…");
@@ -14,10 +15,18 @@ async function bootWorker() {
   startCampaignWorker();
   await checkDailyReset();
   await syncWarmupStages();
+  try {
+    await autoResumePausedMailboxes();
+  } catch (e) {
+    console.warn("Auto-resume skipped:", e instanceof Error ? e.message : e);
+  }
 
   setInterval(() => {
     void checkDailyReset();
     void syncWarmupStages();
+    void autoResumePausedMailboxes().catch((e) =>
+      console.warn("Auto-resume skipped:", e instanceof Error ? e.message : e),
+    );
   }, 3600_000);
 
   setInterval(() => {

@@ -100,6 +100,10 @@ model EmailAccount {
   warmupStage   Int            @default(1)
   warmupStartedAt DateTime?
   isActive      Boolean        @default(true)
+  /** When this mailbox was last paused (auto or manual). */
+  pausedAt      DateTime?
+  /** AUTO_BOUNCE | AUTH | MANUAL — only AUTO_BOUNCE/AUTH are auto-resumed. */
+  pauseReason   String?
   lastInboxPollUid Int         @default(0)
   lastInboxSyncAt  DateTime?
   inboxSyncError   String?

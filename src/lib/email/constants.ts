@@ -22,6 +22,15 @@ export const SENDING_DAY_SECONDS = 86400;
 /** Bounce rate above this pauses an inbox automatically. */
 export const BOUNCE_RATE_PAUSE_THRESHOLD = 0.05;
 
+/** Hours to wait after an auto-pause (bounce) before resuming. */
+export const AUTO_RESUME_BOUNCE_HOURS = 6;
+
+/** Hours to wait after an auth-failure pause before resuming. */
+export const AUTO_RESUME_AUTH_HOURS = 24;
+
+/** Lookback window (hours) used to decide if bounce rate is still too hot to resume. */
+export const AUTO_RESUME_LOOKBACK_HOURS = 24;
+
 /** Health score penalty per hard bounce. */
 export const HEALTH_PENALTY_PER_BOUNCE = 15;
 

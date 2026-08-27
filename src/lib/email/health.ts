@@ -4,6 +4,8 @@ import {
   OPEN_RATE_LOOKBACK_DAYS,
   OPEN_RATE_MIN_SAMPLE,
   BOUNCE_RATE_PAUSE_THRESHOLD,
+  AUTO_RESUME_BOUNCE_HOURS,
+  AUTO_RESUME_AUTH_HOURS,
 } from "./constants";
 
 
@@ -116,7 +118,11 @@ export async function recalculateInboxHealth(inboxId: string) {
     if (inbox?.isActive) {
       await prisma.emailAccount.update({
         where: { id: inboxId },
-        data: { isActive: false },
+        data: {
+          isActive: false,
+          pausedAt: new Date(),
+          pauseReason: "AUTO_BOUNCE",
+        },
       });
     }
   }
@@ -137,7 +143,13 @@ export async function applyAuthFailureHealthCap(inboxId: string) {
     where: { id: inboxId },
     data: {
       healthScore: clampHealth(capped),
-      isActive: capped < 30 ? false : undefined,
+      ...(capped < 30
+        ? {
+            isActive: false,
+            pausedAt: new Date(),
+            pauseReason: "AUTH",
+          }
+        : {}),
     },
   });
 }
@@ -153,4 +165,59 @@ export async function recalculateAllInboxHealth() {
     });
   }
   return results;
+}
+
+function resumeEligibleAt(pausedAt: Date | null, reason: string | null): number {
+  const hours =
+    reason === "AUTH" ? AUTO_RESUME_AUTH_HOURS : AUTO_RESUME_BOUNCE_HOURS;
+  // Legacy pauses (no timestamp) are eligible immediately
+  if (!pausedAt) return 0;
+  return pausedAt.getTime() + hours * 3600_000;
+}
+
+/**
+ * Resume auto-paused mailboxes after cooldown if recent bounce rate has cooled.
+ * Manual pauses are never auto-resumed.
+ */
+export async function autoResumePausedMailboxes(): Promise<number> {
+  const paused = await prisma.emailAccount.findMany({
+    where: {
+      isActive: false,
+      NOT: { pauseReason: "MANUAL" },
+    },
+    select: {
+      id: true,
+      fromEmail: true,
+      pausedAt: true,
+      pauseReason: true,
+    },
+  });
+
+  const now = Date.now();
+  let resumed = 0;
+
+  for (const inbox of paused) {
+    if (now < resumeEligibleAt(inbox.pausedAt, inbox.pauseReason)) continue;
+
+    const stats = await getInboxOpenStats(inbox.id, 1);
+    if (stats.sampleReady && stats.bounceRate >= BOUNCE_RATE_PAUSE_THRESHOLD) {
+      continue;
+    }
+
+    await prisma.emailAccount.update({
+      where: { id: inbox.id },
+      data: {
+        isActive: true,
+        pausedAt: null,
+        pauseReason: null,
+      },
+    });
+    resumed += 1;
+    console.log(`Auto-resumed mailbox ${inbox.fromEmail}`);
+  }
+
+  if (resumed > 0) {
+    console.log(`Auto-resume: ${resumed} mailbox(es) back in rotation`);
+  }
+  return resumed;
 }
