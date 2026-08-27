@@ -90,7 +90,12 @@ async function pollBouncesOnMailbox(config: MailboxImapConfig): Promise<number> 
         source: true,
       })) {
         if (!msg.source) continue;
-        const parsed = await simpleParser(msg.source);
+        const parsed = (await simpleParser(msg.source)) as {
+          subject?: string;
+          text?: string;
+          html?: string | false;
+          date?: Date;
+        };
         const body = `${parsed.text || ""}\n${parsed.html || ""}`;
         const subject = parsed.subject || "";
 
@@ -105,7 +110,7 @@ async function pollBouncesOnMailbox(config: MailboxImapConfig): Promise<number> 
             reason: "HARD_BOUNCE",
             inboxId: config.accountId === "env-bounce" ? null : config.accountId,
             raw: body.slice(0, 4000),
-            occurredAt: parsed.date || new Date(),
+            occurredAt: parsed.date instanceof Date ? parsed.date : new Date(),
           });
           processed += 1;
         }
