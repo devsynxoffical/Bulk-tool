@@ -8,10 +8,18 @@ import {
   parseBouncedRecipientFromBody,
   recordBounce,
 } from "./bounce-handler";
+import {
+  friendlyImapError,
+  imapSlotLimits,
+  isImapConnectionLimitError,
+  withImapSlot,
+} from "./imap-semaphore";
 
 const INITIAL_BACKFILL_COUNT = 200;
 /** When user asks to load older mail, re-scan this many UIDs from the top. */
 const DEEP_BACKFILL_COUNT = 500;
+/** Pause between mailboxes so cPanel does not see a connection stampede. */
+const BETWEEN_MAILBOX_MS = Number(process.env.IMAP_STAGGER_MS || 800);
 const idleLoops = new Map<string, boolean>();
 /** Prevent IDLE + fallback poll from syncing the same mailbox at once. */
 const syncLocks = new Map<string, Promise<number>>();
@@ -405,34 +413,36 @@ export async function syncInboxMailbox(
   config: MailboxImapConfig,
   options: InboxSyncOptions = {},
 ): Promise<number> {
-  return withMailboxLock(config.accountId, async () => {
-    const { ImapFlow } = await import("imapflow");
+  return withMailboxLock(config.accountId, async () =>
+    withImapSlot(config.host, async () => {
+      const { ImapFlow } = await import("imapflow");
 
-    const client = new ImapFlow({
-      host: config.host,
-      port: config.port,
-      secure: config.secure,
-      auth: { user: config.user, pass: config.pass },
-      logger: false,
-      connectionTimeout: 20000,
-      greetingTimeout: 15000,
-    });
-    attachImapErrorGuard(client, config.fromEmail);
+      const client = new ImapFlow({
+        host: config.host,
+        port: config.port,
+        secure: config.secure,
+        auth: { user: config.user, pass: config.pass },
+        logger: false,
+        connectionTimeout: 20000,
+        greetingTimeout: 15000,
+      });
+      attachImapErrorGuard(client, config.fromEmail);
 
-    await client.connect();
-    const lock = await client.getMailboxLock("INBOX");
+      await client.connect();
+      const lock = await client.getMailboxLock("INBOX");
 
-    try {
-      return await fetchAndStoreNewMessages(
-        client as unknown as ImapClient,
-        config,
-        options,
-      );
-    } finally {
-      lock.release();
-      await client.logout().catch(() => undefined);
-    }
-  });
+      try {
+        return await fetchAndStoreNewMessages(
+          client as unknown as ImapClient,
+          config,
+          options,
+        );
+      } finally {
+        lock.release();
+        await client.logout().catch(() => undefined);
+      }
+    }),
+  );
 }
 
 export async function syncAllInboxesOnce(
@@ -440,6 +450,7 @@ export async function syncAllInboxesOnce(
 ): Promise<number> {
   const configs = await resolveMailboxImapConfigs();
   let total = 0;
+  let connectionLimitHits = 0;
 
   for (const config of configs) {
     if (config.accountId === "env-bounce") continue;
@@ -452,17 +463,34 @@ export async function syncAllInboxesOnce(
         );
       }
     } catch (e) {
-      const msg = imapErrorMessage(e);
+      const raw = imapErrorMessage(e);
+      const msg = friendlyImapError(raw);
       console.warn(
         `Inbox sync skipped for ${config.fromEmail} (imap ${config.host}):`,
-        msg,
+        raw,
       );
       await prisma.emailAccount
         .update({
           where: { id: config.accountId },
-          data: { inboxSyncError: msg.slice(0, 500) },
+          data: { inboxSyncError: msg },
         })
         .catch(() => undefined);
+
+      if (isImapConnectionLimitError(raw)) {
+        connectionLimitHits += 1;
+        // Back off harder so we do not burn through every mailbox on a hot IP
+        await new Promise((r) => setTimeout(r, 5_000 * connectionLimitHits));
+        if (connectionLimitHits >= 3) {
+          console.warn(
+            "Inbox sync: aborting cycle after repeated IMAP connection-limit errors",
+          );
+          break;
+        }
+      }
+    }
+
+    if (BETWEEN_MAILBOX_MS > 0) {
+      await new Promise((r) => setTimeout(r, BETWEEN_MAILBOX_MS));
     }
   }
 
@@ -472,7 +500,11 @@ export async function syncAllInboxesOnce(
   return total;
 }
 
-/** Keep an IMAP IDLE connection per mailbox for near-instant delivery. */
+/**
+ * Optional per-mailbox IDLE (near-instant). Disabled by default — cPanel
+ * caps connections per IP (~32); 12+ persistent IDLE sockets exceed that.
+ * Set IMAP_IDLE=true only with few mailboxes.
+ */
 export async function startInboxIdleWatcher(
   config: MailboxImapConfig,
 ): Promise<void> {
@@ -481,6 +513,7 @@ export async function startInboxIdleWatcher(
   idleLoops.set(config.accountId, true);
 
   void (async () => {
+    let backoffMs = 30_000;
     while (idleLoops.get(config.accountId)) {
       try {
         const { ImapFlow } = await import("imapflow");
@@ -515,7 +548,6 @@ export async function startInboxIdleWatcher(
             try {
               await client.idle();
             } catch (idleErr) {
-              // IDLE unsupported / timed out — fall through to a poll, then reconnect
               console.warn(
                 `Inbox IDLE ended for ${config.fromEmail}:`,
                 imapErrorMessage(idleErr).slice(0, 200),
@@ -539,33 +571,52 @@ export async function startInboxIdleWatcher(
         }
 
         await client.logout().catch(() => undefined);
+        backoffMs = 30_000;
       } catch (e) {
-        const msg = imapErrorMessage(e);
+        const raw = imapErrorMessage(e);
+        const msg = friendlyImapError(raw);
         console.warn(
           `Inbox IDLE reconnect for ${config.fromEmail} (imap ${config.host}):`,
-          msg,
+          raw,
         );
-        // Don't overwrite a clear success state with transient socket noise
         const transient = /etimedout|econnreset|socket|closed|timeout/i.test(
-          msg,
+          raw,
         );
         if (!transient) {
           await prisma.emailAccount
             .update({
               where: { id: config.accountId },
-              data: { inboxSyncError: msg.slice(0, 500) },
+              data: { inboxSyncError: msg },
             })
             .catch(() => undefined);
         }
-        await new Promise((r) => setTimeout(r, 30_000));
+        if (isImapConnectionLimitError(raw)) {
+          backoffMs = Math.min(backoffMs * 2, 300_000);
+        }
+        await new Promise((r) => setTimeout(r, backoffMs));
       }
     }
   })();
 }
 
 export async function startAllInboxIdleWatchers(): Promise<void> {
+  if (process.env.IMAP_IDLE !== "true") {
+    const limits = imapSlotLimits();
+    console.log(
+      `IMAP IDLE disabled (set IMAP_IDLE=true to enable). Using staggered poll (max ${limits.maxGlobal} connections, ${limits.maxPerHost}/host).`,
+    );
+    return;
+  }
   const configs = await resolveMailboxImapConfigs();
-  for (const config of configs) {
+  const limits = imapSlotLimits();
+  // Cap IDLE sockets so we do not open one per mailbox on a shared cPanel IP
+  const maxIdle = Math.min(configs.length, limits.maxGlobal);
+  console.warn(
+    `IMAP IDLE enabled for ${maxIdle}/${configs.length} mailbox(es) (cap ${limits.maxGlobal})`,
+  );
+  for (let i = 0; i < maxIdle; i++) {
+    const config = configs[i]!;
+    await new Promise((r) => setTimeout(r, i * 2_000));
     void startInboxIdleWatcher(config);
   }
 }

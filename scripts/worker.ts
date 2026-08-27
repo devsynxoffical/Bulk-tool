@@ -25,18 +25,26 @@ async function bootWorker() {
   }, 60_000);
   void processScheduledCampaigns();
 
+  // Bounce DSN handling runs inside inbox sync. Optional duplicate IMAP poll:
+  // set BOUNCE_IMAP_POLL=true (uses shared connection semaphore).
   setInterval(() => {
     void pollBounceMailboxOnce();
   }, 300_000);
   void pollBounceMailboxOnce();
-  console.log("Bounce poller enabled (uses mailboxes from database)");
+  console.log(
+    process.env.BOUNCE_IMAP_POLL === "true"
+      ? "Bounce IMAP poll enabled"
+      : "Bounce IMAP poll off (bounces handled by inbox sync)",
+  );
 
+  // Poll-only by default — persistent IDLE × N mailboxes exceeds cPanel's
+  // mail_max_userip_connections (~32). Opt in with IMAP_IDLE=true.
   void syncAllInboxesOnce();
   void startAllInboxIdleWatchers();
   setInterval(() => {
     void syncAllInboxesOnce();
   }, 120_000);
-  console.log("Inbox sync enabled (IMAP IDLE + 2min fallback poll)");
+  console.log("Inbox sync enabled (staggered poll every 2min)");
 
   console.log("Worker ready — campaign queue + scheduler active");
 }
