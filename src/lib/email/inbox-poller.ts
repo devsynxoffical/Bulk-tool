@@ -117,6 +117,7 @@ async function storeInboundFromParsed(
         : "";
   const body = `${bodyText}\n${bodyHtml}`;
   const subject = parsed.subject || "(No subject)";
+  const receivedAt = parsed.date || new Date();
 
   if (isBounceNotification(subject, body)) {
     const bouncedEmail = parseBouncedRecipientFromBody(body);
@@ -126,6 +127,7 @@ async function storeInboundFromParsed(
         reason: "HARD_BOUNCE",
         inboxId: config.accountId,
         raw: body.slice(0, 4000),
+        occurredAt: receivedAt,
       });
     }
     return false;
@@ -151,7 +153,6 @@ async function storeInboundFromParsed(
   });
 
   const relatedOutboundId = await matchOutboundMessage(inReplyTo, references);
-  const receivedAt = parsed.date || new Date();
 
   const existing = await prisma.inboundEmail.findUnique({
     where: {

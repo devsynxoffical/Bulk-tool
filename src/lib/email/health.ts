@@ -4,7 +4,6 @@ import {
   OPEN_RATE_LOOKBACK_DAYS,
   OPEN_RATE_MIN_SAMPLE,
   BOUNCE_RATE_PAUSE_THRESHOLD,
-  BOUNCE_PAUSE_LOOKBACK_DAYS,
   AUTO_RESUME_BOUNCE_HOURS,
   AUTO_RESUME_AUTH_HOURS,
 } from "./constants";
@@ -114,25 +113,33 @@ export async function recalculateInboxHealth(
 ) {
   const allowPause = options?.allowPause !== false;
   const stats = await getInboxOpenStats(inboxId);
-  const recent = await getInboxOpenStats(inboxId, BOUNCE_PAUSE_LOOKBACK_DAYS, {
-    hardBouncesOnly: true,
-  });
 
   await prisma.emailAccount.update({
     where: { id: inboxId },
     data: { healthScore: stats.healthScore },
   });
 
-  if (
-    allowPause &&
-    recent.sampleReady &&
-    recent.bounceRate >= BOUNCE_RATE_PAUSE_THRESHOLD
-  ) {
+  if (allowPause) {
     const inbox = await prisma.emailAccount.findUnique({
       where: { id: inboxId },
-      select: { isActive: true },
+      select: {
+        isActive: true,
+        sentToday: true,
+        bounceCount: true,
+        fromEmail: true,
+      },
     });
-    if (inbox?.isActive) {
+    if (!inbox?.isActive) return stats;
+
+    // Pause only when TODAY's send counters look bad.
+    // BounceEvent rows from IMAP history used to create 1000%+ "recent" rates.
+    const dailySent = inbox.sentToday;
+    const dailyBounces = inbox.bounceCount;
+    const dailyHot =
+      dailySent >= OPEN_RATE_MIN_SAMPLE &&
+      dailyBounces / dailySent >= BOUNCE_RATE_PAUSE_THRESHOLD;
+
+    if (dailyHot) {
       await prisma.emailAccount.update({
         where: { id: inboxId },
         data: {
@@ -142,7 +149,7 @@ export async function recalculateInboxHealth(
         },
       });
       console.warn(
-        `Auto-paused mailbox ${inboxId}: recent bounce rate ${(recent.bounceRate * 100).toFixed(1)}% (${recent.bounceCount}/${recent.sent})`,
+        `Auto-paused mailbox ${inbox.fromEmail}: today's bounce rate ${((dailyBounces / dailySent) * 100).toFixed(1)}% (${dailyBounces}/${dailySent})`,
       );
     }
   }
@@ -196,10 +203,17 @@ function resumeEligibleAt(pausedAt: Date | null, reason: string | null): number 
 }
 
 /**
- * Resume auto-paused mailboxes after cooldown if recent bounce rate has cooled.
+ * Resume auto-paused mailboxes after cooldown if today's bounce rate has cooled.
  * Manual pauses are never auto-resumed.
  */
 export async function autoResumePausedMailboxes(): Promise<number> {
+  // IMAP used to inflate bounceCount far above sentToday — repair that first
+  await prisma.$executeRawUnsafe(`
+    UPDATE "EmailAccount"
+    SET "bounceCount" = 0
+    WHERE "bounceCount" > "sentToday"
+  `);
+
   const paused = await prisma.emailAccount.findMany({
     where: {
       isActive: false,
@@ -210,6 +224,8 @@ export async function autoResumePausedMailboxes(): Promise<number> {
       fromEmail: true,
       pausedAt: true,
       pauseReason: true,
+      sentToday: true,
+      bounceCount: true,
     },
   });
 
@@ -217,16 +233,18 @@ export async function autoResumePausedMailboxes(): Promise<number> {
   let resumed = 0;
 
   for (const inbox of paused) {
-    if (now < resumeEligibleAt(inbox.pausedAt, inbox.pauseReason)) continue;
+    const dailySent = inbox.sentToday;
+    const dailyBounces = inbox.bounceCount;
+    const dailyHot =
+      dailySent >= OPEN_RATE_MIN_SAMPLE &&
+      dailyBounces / dailySent >= BOUNCE_RATE_PAUSE_THRESHOLD;
+    if (dailyHot) continue;
 
-    const recent = await getInboxOpenStats(
-      inbox.id,
-      BOUNCE_PAUSE_LOOKBACK_DAYS,
-      { hardBouncesOnly: true },
-    );
+    // Skip cooldown when today's counters are clean (incl. after IMAP bounceCount repair)
+    const cooldownRequired = dailyBounces > 0;
     if (
-      recent.sampleReady &&
-      recent.bounceRate >= BOUNCE_RATE_PAUSE_THRESHOLD
+      cooldownRequired &&
+      now < resumeEligibleAt(inbox.pausedAt, inbox.pauseReason)
     ) {
       continue;
     }

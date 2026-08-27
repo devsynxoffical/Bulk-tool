@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { recalculateInboxHealth } from "./health";
+import { BOUNCE_PAUSE_LOOKBACK_DAYS } from "./constants";
 
 export const BOUNCE_SMTP_PATTERNS =
   /550|552|554|421|mailbox (?:not found|unavailable|disabled)|user unknown|address rejected|recipient rejected|does not exist|no such user|invalid recipient|permanent failure|delivery failed permanently/i;
@@ -28,7 +29,11 @@ function extractEmailFromText(text: string): string | null {
 }
 
 /**
- * Record a bounce: suppress recipient, penalize inbox health, optionally pause inbox.
+ * Record a bounce: suppress recipient, optionally penalize inbox health / pause.
+ *
+ * IMAP often re-reads old DSN emails. Pass `occurredAt` (email Date header).
+ * Bounces older than the pause lookback only suppress the address — they must
+ * not increment today's bounceCount or trigger auto-pause (that caused 1000%+ rates).
  */
 export async function recordBounce(params: {
   email: string;
@@ -37,6 +42,10 @@ export async function recordBounce(params: {
   raw?: string;
   contactId?: string;
   ownerId?: string | null;
+  /** When the bounce actually happened (IMAP Date). Defaults to now. */
+  occurredAt?: Date;
+  /** Override reputation impact. Default: false when occurredAt is too old. */
+  affectReputation?: boolean;
 }) {
   const email = params.email.trim().toLowerCase();
   if (!isValidRecipientEmail(email)) return { ok: false, error: "Invalid email" };
@@ -44,6 +53,11 @@ export async function recordBounce(params: {
   const reason = params.reason || "HARD_BOUNCE";
   const suppressionReason =
     reason === "COMPLAINT" ? "COMPLAINT" : "BOUNCED";
+  const occurredAt = params.occurredAt ?? new Date();
+  const ageMs = Date.now() - occurredAt.getTime();
+  const stale =
+    ageMs > BOUNCE_PAUSE_LOOKBACK_DAYS * 86_400_000 || Number.isNaN(ageMs);
+  const affectReputation = params.affectReputation ?? !stale;
 
   let ownerId = params.ownerId ?? null;
   if (!ownerId && params.inboxId) {
@@ -113,10 +127,11 @@ export async function recordBounce(params: {
       reason,
       raw: params.raw?.slice(0, 4000),
       contactId: params.contactId ?? contact?.id,
+      createdAt: occurredAt,
     },
   });
 
-  if (params.inboxId) {
+  if (params.inboxId && affectReputation) {
     await prisma.emailAccount.update({
       where: { id: params.inboxId },
       data: { bounceCount: { increment: 1 } },
@@ -124,7 +139,7 @@ export async function recordBounce(params: {
     await recalculateInboxHealth(params.inboxId);
   }
 
-  return { ok: true, email, reason };
+  return { ok: true, email, reason, affectReputation };
 }
 
 /**

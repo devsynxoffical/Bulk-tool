@@ -105,6 +105,7 @@ async function pollBouncesOnMailbox(config: MailboxImapConfig): Promise<number> 
             reason: "HARD_BOUNCE",
             inboxId: config.accountId === "env-bounce" ? null : config.accountId,
             raw: body.slice(0, 4000),
+            occurredAt: parsed.date || new Date(),
           });
           processed += 1;
         }
