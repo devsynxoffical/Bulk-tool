@@ -2,11 +2,17 @@ import { prisma, ensureDbSchema } from "@/lib/prisma";
 import {
   extractDomainFromEmail,
   MIN_INBOX_INTERVAL_SEC,
-  MAX_INBOX_COOLDOWN_SEC,
   SENDING_DAY_SECONDS,
   BOUNCE_RATE_PAUSE_THRESHOLD,
 } from "./constants";
 import { getEffectiveDailyLimit } from "./warmup";
+import {
+  getEngineConfig,
+  resolveHourlyCap,
+  resolveSendIntervalSec,
+  resolveWarmupMaxStage,
+  type EnginePacingConfig,
+} from "./engine-config";
 
 export type EmailAccountRecord = Awaited<
   ReturnType<typeof prisma.emailAccount.findFirst>
@@ -24,27 +30,81 @@ type InboxWithDomain = Awaited<
   } | null;
 };
 
-/** Cooldown ms for an inbox — spreads its daily cap evenly over 24 hours. */
-export function getInboxCooldownMs(inbox: {
-  dailyLimit: number;
-  warmupEnabled: boolean;
-  warmupStartedAt?: Date | null;
-  createdAt: Date;
+function hourWindowFresh(
+  hourWindowStart: Date | null | undefined,
+  now = Date.now(),
+): boolean {
+  if (!hourWindowStart) return false;
+  return now - hourWindowStart.getTime() < 3600_000;
+}
+
+function effectiveSentThisHour(inbox: {
+  sentThisHour?: number | null;
+  hourWindowStart?: Date | null;
 }): number {
-  const cap = getEffectiveDailyLimit(inbox);
+  if (!hourWindowFresh(inbox.hourWindowStart)) return 0;
+  return inbox.sentThisHour ?? 0;
+}
+
+/** Cooldown ms for an inbox — respects engine/mailbox interval + daily spread. */
+export function getInboxCooldownMs(
+  inbox: {
+    dailyLimit: number;
+    warmupEnabled: boolean;
+    warmupStartedAt?: Date | null;
+    createdAt: Date;
+    warmupMaxStage?: number | null;
+    hourlyCap?: number | null;
+    sendIntervalSec?: number | null;
+  },
+  engine: EnginePacingConfig,
+): number {
+  const maxStage = resolveWarmupMaxStage(inbox.warmupMaxStage, engine);
+  const cap = getEffectiveDailyLimit(inbox, maxStage);
+  const hourlyCap = resolveHourlyCap(inbox.hourlyCap, engine);
+  const intervalSec = resolveSendIntervalSec(
+    inbox.sendIntervalSec,
+    engine,
+    hourlyCap,
+  );
+
   const evenSpreadSec = SENDING_DAY_SECONDS / Math.max(cap, 1);
-  const spreadCooldownSec = Math.max(MIN_INBOX_INTERVAL_SEC, evenSpreadSec * 0.9);
-  // Daily cap (e.g. 20/day warmup) is enforced separately — don't idle 65+ min between sends
-  const cooldownSec = Math.min(spreadCooldownSec, MAX_INBOX_COOLDOWN_SEC);
+  const spreadCooldownSec = Math.max(
+    MIN_INBOX_INTERVAL_SEC,
+    evenSpreadSec * 0.9,
+    intervalSec * 0.85,
+  );
+  // Prefer configured interval as the real pacing floor/ceiling
+  const cooldownSec = Math.max(
+    MIN_INBOX_INTERVAL_SEC,
+    Math.min(spreadCooldownSec, intervalSec),
+  );
   return Math.floor(cooldownSec * 1000);
 }
 
 export function inboxCooldownReady(
-  inbox: { lastSentAt: Date | null } & Parameters<typeof getInboxCooldownMs>[0],
+  inbox: {
+    lastSentAt: Date | null;
+  } & Parameters<typeof getInboxCooldownMs>[0],
+  engine: EnginePacingConfig,
   now = Date.now(),
 ): boolean {
   if (!inbox.lastSentAt) return true;
-  return now - inbox.lastSentAt.getTime() >= getInboxCooldownMs(inbox);
+  return (
+    now - inbox.lastSentAt.getTime() >= getInboxCooldownMs(inbox, engine)
+  );
+}
+
+function inboxHourlyOk(
+  inbox: {
+    sentThisHour?: number | null;
+    hourWindowStart?: Date | null;
+    hourlyCap?: number | null;
+  },
+  engine: EnginePacingConfig,
+): boolean {
+  const cap = resolveHourlyCap(inbox.hourlyCap, engine);
+  return effectiveSentThisHour(inbox) < cap;
 }
 
 function inboxBounceRateOk(inbox: InboxWithDomain): boolean {
@@ -55,7 +115,6 @@ function inboxBounceRateOk(inbox: InboxWithDomain): boolean {
 let lastDailyResetKey: string | null = null;
 
 export async function checkDailyReset() {
-  // Only hit DB once per calendar day per process (was running on every capacity/send call)
   const key = new Date().toISOString().slice(0, 10);
   if (lastDailyResetKey === key) return;
   lastDailyResetKey = key;
@@ -86,13 +145,21 @@ export async function checkDailyReset() {
   });
 }
 
-function inboxHasCapacity(inbox: InboxWithDomain): boolean {
-  const cap = getEffectiveDailyLimit({
-    dailyLimit: inbox.dailyLimit,
-    warmupEnabled: inbox.warmupEnabled,
-    warmupStartedAt: inbox.warmupStartedAt,
-    createdAt: inbox.createdAt,
-  });
+function inboxHasCapacity(
+  inbox: InboxWithDomain,
+  engine: EnginePacingConfig,
+): boolean {
+  const maxStage = resolveWarmupMaxStage(inbox.warmupMaxStage, engine);
+  const cap = getEffectiveDailyLimit(
+    {
+      dailyLimit: inbox.dailyLimit,
+      warmupEnabled: inbox.warmupEnabled,
+      warmupStartedAt: inbox.warmupStartedAt,
+      createdAt: inbox.createdAt,
+      warmupMaxStage: inbox.warmupMaxStage,
+    },
+    maxStage,
+  );
   return inbox.sentToday < cap;
 }
 
@@ -135,24 +202,22 @@ function rankInboxes(inboxes: InboxWithDomain[]): InboxWithDomain[] {
   });
 }
 
-/**
- * Domain-first round-robin with per-inbox cooldown and bounce-rate filtering.
- */
 export type GetNextSendingInboxOptions = {
-  /** When false, manual one-off sends can go immediately (campaigns keep default true). */
   respectCooldown?: boolean;
-  /** Required for tenant isolation — only this user's mailboxes. */
   ownerId?: string;
 };
 
 function describeInboxBlockers(
   inbox: InboxWithDomain,
+  engine: EnginePacingConfig,
   now: number,
   respectCooldown: boolean,
 ): string[] {
   const reasons: string[] = [];
-  if (!inboxHasCapacity(inbox)) {
-    reasons.push(`daily cap (${inbox.sentToday}/${getEffectiveDailyLimit(inbox)})`);
+  const maxStage = resolveWarmupMaxStage(inbox.warmupMaxStage, engine);
+  const dailyCap = getEffectiveDailyLimit(inbox, maxStage);
+  if (!inboxHasCapacity(inbox, engine)) {
+    reasons.push(`daily cap (${inbox.sentToday}/${dailyCap})`);
   }
   if (!domainHasCapacity(inbox.domain)) {
     reasons.push(
@@ -160,13 +225,17 @@ function describeInboxBlockers(
     );
   }
   if (!inboxBounceRateOk(inbox)) reasons.push("bounce rate");
-  if (respectCooldown && !inboxCooldownReady(inbox, now)) {
+  if (!inboxHourlyOk(inbox, engine)) {
+    const cap = resolveHourlyCap(inbox.hourlyCap, engine);
+    reasons.push(`hourly cap (${effectiveSentThisHour(inbox)}/${cap})`);
+  }
+  if (respectCooldown && !inboxCooldownReady(inbox, engine, now)) {
     const waitSec = inbox.lastSentAt
       ? Math.max(
           0,
           Math.ceil(
             (inbox.lastSentAt.getTime() +
-              getInboxCooldownMs(inbox) -
+              getInboxCooldownMs(inbox, engine) -
               now) /
               1000,
           ),
@@ -182,6 +251,7 @@ export async function getNextSendingInbox(
 ): Promise<EmailAccountRecord> {
   const { respectCooldown = true, ownerId } = options;
   await checkDailyReset();
+  const engine = await getEngineConfig();
 
   const inboxes = await prisma.emailAccount.findMany({
     where: {
@@ -205,10 +275,11 @@ export async function getNextSendingInbox(
 
   const eligible = inboxes.filter(
     (inbox) =>
-      inboxHasCapacity(inbox) &&
+      inboxHasCapacity(inbox, engine) &&
       domainHasCapacity(inbox.domain) &&
       inboxBounceRateOk(inbox) &&
-      (respectCooldown ? inboxCooldownReady(inbox) : true),
+      inboxHourlyOk(inbox, engine) &&
+      (respectCooldown ? inboxCooldownReady(inbox, engine) : true),
   );
 
   if (eligible.length === 0) return null;
@@ -216,11 +287,11 @@ export async function getNextSendingInbox(
   return rankInboxes(eligible)[0];
 }
 
-/** Milliseconds until any inbox becomes ready (for job retry delay). */
 export async function getMsUntilInboxAvailable(
   ownerId?: string,
 ): Promise<number> {
   await checkDailyReset();
+  const engine = await getEngineConfig();
 
   const inboxes = await prisma.emailAccount.findMany({
     where: {
@@ -244,10 +315,21 @@ export async function getMsUntilInboxAvailable(
   let minWait = 60_000;
 
   for (const inbox of inboxes) {
-    if (!inboxHasCapacity(inbox) || !domainHasCapacity(inbox.domain)) continue;
+    if (!inboxHasCapacity(inbox, engine) || !domainHasCapacity(inbox.domain)) {
+      continue;
+    }
     if (!inboxBounceRateOk(inbox)) continue;
+
+    if (!inboxHourlyOk(inbox, engine)) {
+      const windowStart = inbox.hourWindowStart?.getTime() ?? now;
+      const waitHour = Math.max(5_000, windowStart + 3600_000 - now);
+      minWait = Math.min(minWait, waitHour);
+      continue;
+    }
+
     if (!inbox.lastSentAt) return 0;
-    const readyAt = inbox.lastSentAt.getTime() + getInboxCooldownMs(inbox);
+    const readyAt =
+      inbox.lastSentAt.getTime() + getInboxCooldownMs(inbox, engine);
     const wait = readyAt - now;
     if (wait <= 0) return 0;
     minWait = Math.min(minWait, wait);
@@ -258,13 +340,19 @@ export async function getMsUntilInboxAvailable(
 
 export function explainInboxAvailability(
   inboxes: InboxWithDomain[],
+  engine: EnginePacingConfig,
   respectCooldown = true,
 ): string {
   const now = Date.now();
   const lines = inboxes
     .filter((i) => i.isActive)
     .map((inbox) => {
-      const blockers = describeInboxBlockers(inbox, now, respectCooldown);
+      const blockers = describeInboxBlockers(
+        inbox,
+        engine,
+        now,
+        respectCooldown,
+      );
       return blockers.length
         ? `${inbox.fromEmail}: ${blockers.join(", ")}`
         : `${inbox.fromEmail}: ready`;
@@ -279,11 +367,24 @@ export async function recordInboxSend(
 ) {
   const { applyCooldown = true } = options;
   try {
+    const now = new Date();
+    const existing = await prisma.emailAccount.findUnique({
+      where: { id: inboxId },
+      select: { sentThisHour: true, hourWindowStart: true },
+    });
+
+    const windowFresh = hourWindowFresh(existing?.hourWindowStart, now.getTime());
+    const nextHourCount = windowFresh ? (existing?.sentThisHour ?? 0) + 1 : 1;
+
     await prisma.emailAccount.update({
       where: { id: inboxId },
       data: {
         sentToday: { increment: 1 },
-        ...(applyCooldown ? { lastSentAt: new Date() } : {}),
+        sentThisHour: nextHourCount,
+        hourWindowStart: windowFresh
+          ? existing?.hourWindowStart ?? now
+          : now,
+        ...(applyCooldown ? { lastSentAt: now } : {}),
       },
     });
 
@@ -292,7 +393,7 @@ export async function recordInboxSend(
         where: { id: domainId },
         data: {
           sentToday: { increment: 1 },
-          lastSentAt: new Date(),
+          lastSentAt: now,
         },
       });
     }
@@ -303,6 +404,7 @@ export async function recordInboxSend(
 
 export async function getSendingCapacityStats(ownerId?: string) {
   await checkDailyReset();
+  const engine = await getEngineConfig();
 
   const ownerFilter = ownerId ? { ownerId } : {};
 
@@ -321,12 +423,8 @@ export async function getSendingCapacityStats(ownerId?: string) {
   let inboxSentToday = 0;
 
   for (const inbox of inboxes) {
-    inboxCapacityToday += getEffectiveDailyLimit({
-      dailyLimit: inbox.dailyLimit,
-      warmupEnabled: inbox.warmupEnabled,
-      warmupStartedAt: inbox.warmupStartedAt,
-      createdAt: inbox.createdAt,
-    });
+    const maxStage = resolveWarmupMaxStage(inbox.warmupMaxStage, engine);
+    inboxCapacityToday += getEffectiveDailyLimit(inbox, maxStage);
     inboxSentToday += inbox.sentToday;
   }
 
@@ -339,20 +437,15 @@ export async function getSendingCapacityStats(ownerId?: string) {
 
   const avgCooldownSec =
     inboxes.length > 0
-      ? inboxes.reduce((sum, i) => sum + getInboxCooldownMs(i) / 1000, 0) /
-        inboxes.length
+      ? inboxes.reduce(
+          (sum, i) => sum + getInboxCooldownMs(i, engine) / 1000,
+          0,
+        ) / inboxes.length
       : 0;
 
   const theoreticalDailyMax = inboxes.reduce((sum, i) => {
-    return (
-      sum +
-      getEffectiveDailyLimit({
-        dailyLimit: i.dailyLimit,
-        warmupEnabled: i.warmupEnabled,
-        warmupStartedAt: i.warmupStartedAt,
-        createdAt: i.createdAt,
-      })
-    );
+    const maxStage = resolveWarmupMaxStage(i.warmupMaxStage, engine);
+    return sum + getEffectiveDailyLimit(i, maxStage);
   }, 0);
 
   return {
@@ -366,5 +459,8 @@ export async function getSendingCapacityStats(ownerId?: string) {
     verifiedDomains: domains.filter((d) => d.isVerified).length,
     avgInboxCooldownSec: Math.round(avgCooldownSec),
     theoreticalDailyMax,
+    warmupMaxStage: engine.warmupMaxStage,
+    inboxHourlyCap: engine.inboxHourlyCap,
+    inboxIntervalSec: engine.inboxIntervalSec,
   };
 }

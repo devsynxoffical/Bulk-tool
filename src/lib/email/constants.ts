@@ -16,8 +16,26 @@ export const MAX_INBOX_COOLDOWN_SEC = 180;
 /** Parallel campaign workers (one send per inbox slot). */
 export const WORKER_CONCURRENCY = 4;
 
+/**
+ * Max sends per mailbox per rolling hour.
+ * 6/hour ≈ one send every ~10 minutes — avoids dumping the daily warmup cap in a burst.
+ */
+export const INBOX_HOURLY_CAP = Math.max(
+  1,
+  Number(process.env.INBOX_HOURLY_CAP || 6),
+);
+
 /** Seconds in a sending day for spread calculations. */
 export const SENDING_DAY_SECONDS = 86400;
+
+/**
+ * Highest warmup stage allowed (1–5). New mailboxes default to 2 (50/day).
+ * Set WARMUP_MAX_STAGE=5 in env to allow full ramp system-wide.
+ */
+export const DEFAULT_WARMUP_MAX_STAGE = Math.min(
+  5,
+  Math.max(1, Number(process.env.WARMUP_MAX_STAGE || 2)),
+);
 
 /** Bounce rate above this pauses an inbox automatically. */
 export const BOUNCE_RATE_PAUSE_THRESHOLD = 0.05;

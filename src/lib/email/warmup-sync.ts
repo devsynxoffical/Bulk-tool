@@ -1,17 +1,20 @@
 import { prisma } from "@/lib/prisma";
 import { getAutoWarmupStage, getWarmupDayNumber } from "./warmup";
+import { getEngineConfig, resolveWarmupMaxStage } from "./engine-config";
 
 /**
- * Syncs each inbox's warmupStage column to the auto-calculated stage for today.
- * Run once daily from the worker.
+ * Syncs each inbox's warmupStage column to the auto-calculated stage for today,
+ * capped by engine / per-mailbox max stage.
  */
 export async function syncWarmupStages() {
+  const engine = await getEngineConfig();
   const inboxes = await prisma.emailAccount.findMany({
     where: { warmupEnabled: true },
     select: {
       id: true,
       warmupStage: true,
       warmupStartedAt: true,
+      warmupMaxStage: true,
       createdAt: true,
     },
   });
@@ -20,7 +23,8 @@ export async function syncWarmupStages() {
   for (const inbox of inboxes) {
     const startedAt = inbox.warmupStartedAt ?? inbox.createdAt;
     const day = getWarmupDayNumber(startedAt);
-    const stage = getAutoWarmupStage(day);
+    const maxStage = resolveWarmupMaxStage(inbox.warmupMaxStage, engine);
+    const stage = Math.min(getAutoWarmupStage(day), maxStage);
     if (inbox.warmupStage !== stage) {
       await prisma.emailAccount.update({
         where: { id: inbox.id },
@@ -46,6 +50,8 @@ export async function restartMailboxWarmup(inboxId: string) {
       warmupStartedAt: now,
       warmupStage: 1,
       sentToday: 0,
+      sentThisHour: 0,
+      hourWindowStart: null,
     },
   });
 }

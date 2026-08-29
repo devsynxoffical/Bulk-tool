@@ -72,6 +72,38 @@ export async function ensureDbSchema() {
       );
     }
 
+    try {
+      await prisma.$queryRawUnsafe(
+        `SELECT "sentThisHour" FROM "EmailAccount" WHERE false`,
+      );
+    } catch {
+      await prisma.$executeRawUnsafe(
+        `ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "warmupMaxStage" INTEGER`,
+      );
+      await prisma.$executeRawUnsafe(
+        `ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "hourlyCap" INTEGER`,
+      );
+      await prisma.$executeRawUnsafe(
+        `ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "sendIntervalSec" INTEGER`,
+      );
+      await prisma.$executeRawUnsafe(
+        `ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "sentThisHour" INTEGER NOT NULL DEFAULT 0`,
+      );
+      await prisma.$executeRawUnsafe(
+        `ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "hourWindowStart" TIMESTAMP(3)`,
+      );
+    }
+
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "EngineConfig" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "warmupMaxStage" INTEGER NOT NULL DEFAULT 2,
+        "inboxHourlyCap" INTEGER NOT NULL DEFAULT 6,
+        "inboxIntervalSec" INTEGER,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
     globalForPrisma.dbSchemaEnsured = true;
   })();
 
@@ -129,11 +161,26 @@ async function runFullSchemaEnsure() {
     `ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "inboxSyncError" TEXT`,
     `ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "pausedAt" TIMESTAMP(3)`,
     `ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "pauseReason" TEXT`,
+    `ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "warmupMaxStage" INTEGER`,
+    `ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "hourlyCap" INTEGER`,
+    `ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "sendIntervalSec" INTEGER`,
+    `ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "sentThisHour" INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "hourWindowStart" TIMESTAMP(3)`,
     `ALTER TABLE "EmailAccount" ADD COLUMN IF NOT EXISTS "ownerId" TEXT`,
   ];
   for (const sql of emailAccountCols) {
     await prisma.$executeRawUnsafe(sql);
   }
+
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "EngineConfig" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "warmupMaxStage" INTEGER NOT NULL DEFAULT 2,
+      "inboxHourlyCap" INTEGER NOT NULL DEFAULT 6,
+      "inboxIntervalSec" INTEGER,
+      "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
 
   for (const sql of [
     `ALTER TABLE "SendingDomain" ADD COLUMN IF NOT EXISTS "dailyLimit" INTEGER NOT NULL DEFAULT 1000`,

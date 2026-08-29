@@ -59,6 +59,7 @@ type EmailAccount = {
   openSampleReady: boolean;
   warmupEnabled: boolean;
   warmupStage: number;
+  warmupMaxStage?: number | null;
   warmupDay: number;
   warmupComplete: boolean;
   warmupLabel: string;
@@ -66,6 +67,9 @@ type EmailAccount = {
   isActive: boolean;
   pauseReason?: string | null;
   pausedAt?: string | null;
+  sentThisHour?: number;
+  hourlyCap?: number | null;
+  engineHourlyCap?: number;
   hasPassword: boolean;
   lastInboxSyncAt?: string | null;
   inboxSyncError?: string | null;
@@ -84,6 +88,9 @@ type CapacityStats = {
   bounceRate?: number;
   throttled?: boolean;
   workerConcurrency?: number;
+  inboxHourlyCap?: number;
+  inboxIntervalSec?: number | null;
+  warmupMaxStage?: number;
   smtpRelayEnabled?: boolean;
   smtpRelay?: { ok: boolean; url?: string; error?: string } | null;
 };
@@ -392,8 +399,12 @@ export function MailboxManager() {
               />
             </div>
             <p className="mt-2 text-[11px] text-zinc-500">
-              Target: {RECOMMENDED_INBOX_COUNT} mailboxes × 250/day · {capacity.workerConcurrency ?? 4} parallel workers ·
-              ~{capacity.avgInboxCooldownSec ?? 345}s cooldown/inbox · auto bounce suppression
+              Warmup cap stage {capacity.warmupMaxStage ?? 2} ·{" "}
+              {capacity.inboxHourlyCap ?? 6}/hour per mailbox ·{" "}
+              {capacity.inboxIntervalSec != null
+                ? `${capacity.inboxIntervalSec}s manual interval`
+                : `~${capacity.avgInboxCooldownSec ?? 600}s auto interval`}{" "}
+              · {capacity.workerConcurrency ?? 4} workers
               {capacity.throttled ? " · ⚠️ throttled (high bounce rate)" : ""}
               {capacity.smtpRelayEnabled && (
                 <>
@@ -405,6 +416,10 @@ export function MailboxManager() {
                   )}
                 </>
               )}
+              {" · "}
+              <a href="/settings" className="text-blue-600 hover:underline">
+                Edit in Pace &amp; Warmup
+              </a>
             </p>
           </CardContent>
         </Card>
@@ -494,7 +509,10 @@ export function MailboxManager() {
                   {acc.warmupEnabled && !acc.warmupComplete && (
                     <div className="space-y-1.5 pt-1">
                       <div className="flex justify-between text-[11px] text-amber-800 font-medium">
-                        <span>Warmup day {acc.warmupDay} · Stage {acc.warmupStage}/5</span>
+                        <span>
+                          Warmup day {acc.warmupDay} · Stage {acc.warmupStage}/
+                          {acc.warmupMaxStage ?? 5}
+                        </span>
                         {acc.daysUntilNextStage != null && (
                           <span>{acc.daysUntilNextStage}d to next stage</span>
                         )}
@@ -502,15 +520,27 @@ export function MailboxManager() {
                       <div className="h-1.5 overflow-hidden rounded-full bg-amber-100">
                         <div
                           className="h-full rounded-full bg-amber-500 transition-all"
-                          style={{ width: `${Math.min(100, (acc.warmupStage / 5) * 100)}%` }}
+                          style={{
+                            width: `${Math.min(
+                              100,
+                              (acc.warmupStage / Math.max(acc.warmupMaxStage ?? 5, 1)) *
+                                100,
+                            )}%`,
+                          }}
                         />
                       </div>
                       <p className="text-[10px] text-zinc-500">{acc.warmupLabel}</p>
                     </div>
                   )}
                   {acc.warmupComplete && (
-                    <p className="text-[11px] text-emerald-700 font-medium">Warmup complete — full capacity</p>
+                    <p className="text-[11px] text-emerald-700 font-medium">
+                      {acc.warmupLabel || "Warmup complete — full capacity"}
+                    </p>
                   )}
+                  <p className="text-[10px] text-zinc-400">
+                    This hour: {acc.sentThisHour ?? 0}/
+                    {acc.hourlyCap ?? acc.engineHourlyCap ?? 6} sends
+                  </p>
                   <div className="flex flex-wrap justify-end gap-1 pt-2 border-t border-zinc-100">
                     <Button
                       variant="ghost"

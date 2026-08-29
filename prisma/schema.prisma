@@ -98,8 +98,17 @@ model EmailAccount {
   bounceCount   Int            @default(0)
   warmupEnabled Boolean        @default(true)
   warmupStage   Int            @default(1)
+  /** Cap warmup progression (1–5). Null = use EngineConfig.warmupMaxStage. */
+  warmupMaxStage Int?
+  /** Override hourly send cap for this mailbox. Null = use EngineConfig. */
+  hourlyCap     Int?
+  /** Override min seconds between sends. Null = auto from hourly cap / engine. */
+  sendIntervalSec Int?
   warmupStartedAt DateTime?
   isActive      Boolean        @default(true)
+  /** Sends counted in the current hour window. */
+  sentThisHour  Int            @default(0)
+  hourWindowStart DateTime?
   /** When this mailbox was last paused (auto or manual). */
   pausedAt      DateTime?
   /** AUTO_BOUNCE | AUTH | MANUAL — only AUTO_BOUNCE/AUTH are auto-resumed. */
@@ -115,6 +124,18 @@ model EmailAccount {
   @@index([domainId])
   @@index([isActive, sentToday])
   @@index([ownerId, isActive])
+}
+
+/** Singleton engine pacing / warmup defaults (id = "default"). */
+model EngineConfig {
+  id               String   @id @default("default")
+  /** Highest warmup stage (1–5). Default 2 = 50/day. */
+  warmupMaxStage   Int      @default(2)
+  /** Max sends per mailbox per rolling hour. Default 6. */
+  inboxHourlyCap   Int      @default(6)
+  /** Optional global min seconds between sends on the same inbox. Null = auto. */
+  inboxIntervalSec Int?
+  updatedAt        DateTime @updatedAt
 }
 
 model InboundEmail {

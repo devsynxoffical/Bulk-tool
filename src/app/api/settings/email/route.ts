@@ -18,6 +18,7 @@ import {
   resolveWarmupContext,
 } from "@/lib/email/warmup";
 import { getInboxOpenStats } from "@/lib/email/health";
+import { getEngineConfig, resolveWarmupMaxStage } from "@/lib/email/engine-config";
 
 const createSchema = z.object({
   id: z.string().optional(),
@@ -39,6 +40,9 @@ const createSchema = z.object({
     .optional()
     .default(DEFAULT_INBOX_DAILY_LIMIT),
   warmupEnabled: z.boolean().optional().default(true),
+  warmupMaxStage: z.number().int().min(1).max(5).nullable().optional(),
+  hourlyCap: z.number().int().min(1).max(250).nullable().optional(),
+  sendIntervalSec: z.number().int().min(30).max(3600).nullable().optional(),
   isActive: z.boolean().optional().default(true),
 });
 
@@ -93,8 +97,15 @@ function formatAccount(
     healthScore: number;
     sampleReady: boolean;
   },
+  engineMaxStage = 5,
+  engineHourlyCap = 6,
 ) {
-  const warmup = resolveWarmupContext(acc);
+  const maxStage = resolveWarmupMaxStage(acc.warmupMaxStage, {
+    warmupMaxStage: engineMaxStage,
+    inboxHourlyCap: engineHourlyCap,
+    inboxIntervalSec: null,
+  });
+  const warmup = resolveWarmupContext(acc, maxStage);
   const healthScore = openStats?.healthScore ?? Math.max(0, Math.min(100, acc.healthScore ?? 100));
   return {
     id: acc.id,
@@ -112,6 +123,7 @@ function formatAccount(
     dailyLimit: acc.dailyLimit || DEFAULT_INBOX_DAILY_LIMIT,
     effectiveDailyLimit: warmup.effectiveDailyLimit,
     sentToday: acc.sentToday || 0,
+    sentThisHour: acc.sentThisHour || 0,
     healthScore,
     openRate: openStats ? Math.round(openStats.openRate * 1000) / 10 : null,
     opensTracked: openStats?.opened ?? null,
@@ -119,11 +131,15 @@ function formatAccount(
     openSampleReady: openStats?.sampleReady ?? false,
     warmupEnabled: acc.warmupEnabled,
     warmupStage: warmup.stage,
+    warmupMaxStage: acc.warmupMaxStage ?? null,
     warmupDay: warmup.warmupDay,
     warmupComplete: warmup.isComplete,
     warmupLabel: warmup.stageLabel,
     daysUntilNextStage: warmup.daysUntilNextStage,
     warmupStartedAt: warmup.startedAt.toISOString(),
+    hourlyCap: acc.hourlyCap ?? null,
+    sendIntervalSec: acc.sendIntervalSec ?? null,
+    engineHourlyCap,
     isActive: acc.isActive,
     pauseReason: acc.pauseReason ?? null,
     pausedAt: acc.pausedAt?.toISOString() ?? null,
@@ -143,6 +159,7 @@ export async function GET(req: NextRequest) {
 
   try {
     await ensureDbSchema();
+    const engine = await getEngineConfig();
     const accounts = await prisma.emailAccount.findMany({
       where: { ...scope },
       orderBy: { createdAt: "desc" },
@@ -159,7 +176,7 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    // Backfill warmupStartedAt + sync auto stage
+    // Backfill warmupStartedAt + sync auto stage (respect max stage cap)
     await Promise.all(
       accounts.map(async (acc) => {
         if (!acc.warmupEnabled) return;
@@ -174,7 +191,11 @@ export async function GET(req: NextRequest) {
           startedAt = acc.createdAt;
         }
 
-        const stage = getAutoWarmupStage(getWarmupDayNumber(startedAt));
+        const maxStage = resolveWarmupMaxStage(acc.warmupMaxStage, engine);
+        const stage = Math.min(
+          getAutoWarmupStage(getWarmupDayNumber(startedAt)),
+          maxStage,
+        );
         if (acc.warmupStage !== stage) {
           await prisma.emailAccount.update({
             where: { id: acc.id },
@@ -205,7 +226,12 @@ export async function GET(req: NextRequest) {
         } catch {
           stats = undefined;
         }
-        return formatAccount(acc, stats);
+        return formatAccount(
+          acc,
+          stats,
+          engine.warmupMaxStage,
+          engine.inboxHourlyCap,
+        );
       }),
     );
 

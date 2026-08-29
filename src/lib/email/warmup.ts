@@ -19,6 +19,7 @@ export type WarmupContext = {
   enabled: boolean;
   warmupDay: number;
   stage: number;
+  maxStage: number;
   dailyCap: number;
   effectiveDailyLimit: number;
   isComplete: boolean;
@@ -61,20 +62,33 @@ export function getScheduleEntry(stage: number) {
   return WARMUP_SCHEDULE.find((s) => s.stage === stage) ?? WARMUP_SCHEDULE[4];
 }
 
-export function resolveWarmupContext(account: {
-  dailyLimit: number;
-  warmupEnabled: boolean;
-  warmupStartedAt?: Date | null;
-  createdAt: Date;
-}): WarmupContext {
+export function resolveWarmupContext(
+  account: {
+    dailyLimit: number;
+    warmupEnabled: boolean;
+    warmupStartedAt?: Date | null;
+    createdAt: Date;
+    warmupMaxStage?: number | null;
+  },
+  /** Engine / mailbox max stage (1–5). Defaults to 5 if omitted. */
+  maxStageCap = 5,
+): WarmupContext {
   const configured = account.dailyLimit || DEFAULT_INBOX_DAILY_LIMIT;
   const startedAt = account.warmupStartedAt ?? account.createdAt;
+  const maxStage = Math.min(
+    5,
+    Math.max(
+      1,
+      account.warmupMaxStage ?? maxStageCap,
+    ),
+  );
 
   if (!account.warmupEnabled) {
     return {
       enabled: false,
       warmupDay: 0,
       stage: 5,
+      maxStage,
       dailyCap: configured,
       effectiveDailyLimit: configured,
       isComplete: true,
@@ -86,15 +100,16 @@ export function resolveWarmupContext(account: {
   }
 
   const warmupDay = getWarmupDayNumber(startedAt);
-  const stage = getAutoWarmupStage(warmupDay);
+  const autoStage = getAutoWarmupStage(warmupDay);
+  const stage = Math.min(autoStage, maxStage);
   const entry = getScheduleEntry(stage);
   const dailyCap = Math.min(configured, entry.dailyCap);
-  const isComplete = stage >= 5 && warmupDay >= 22;
+  const isComplete = stage >= maxStage;
 
   let nextStage: (typeof WARMUP_SCHEDULE)[number] | null = null;
   let daysUntilNextStage: number | null = null;
 
-  if (!isComplete && entry.toDay !== null) {
+  if (!isComplete && entry.toDay !== null && stage < maxStage) {
     nextStage = getScheduleEntry(stage + 1);
     daysUntilNextStage = Math.max(0, entry.toDay - warmupDay + 1);
   }
@@ -103,24 +118,31 @@ export function resolveWarmupContext(account: {
     enabled: true,
     warmupDay,
     stage,
+    maxStage,
     dailyCap: entry.dailyCap,
     effectiveDailyLimit: dailyCap,
     isComplete,
     startedAt,
     daysUntilNextStage,
     nextStage,
-    stageLabel: `Stage ${stage} (${entry.label}): ${dailyCap}/day`,
+    stageLabel: isComplete
+      ? `Capped at stage ${stage} (${entry.label}): ${dailyCap}/day`
+      : `Stage ${stage}/${maxStage} (${entry.label}): ${dailyCap}/day`,
   };
 }
 
-export function getEffectiveDailyLimit(account: {
-  dailyLimit: number;
-  warmupEnabled: boolean;
-  warmupStartedAt?: Date | null;
-  createdAt: Date;
-  warmupStage?: number;
-}): number {
-  return resolveWarmupContext(account).effectiveDailyLimit;
+export function getEffectiveDailyLimit(
+  account: {
+    dailyLimit: number;
+    warmupEnabled: boolean;
+    warmupStartedAt?: Date | null;
+    createdAt: Date;
+    warmupStage?: number;
+    warmupMaxStage?: number | null;
+  },
+  maxStageCap = 5,
+): number {
+  return resolveWarmupContext(account, maxStageCap).effectiveDailyLimit;
 }
 
 export function getRandomCampaignDelayMs(minSec = 45, maxSec = 90): number {
